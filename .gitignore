@@ -1,0 +1,8 @@
+tests/output/
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
+# never commit real attendee data or backups
+*-backup-*.json
+*.csv
