@@ -6,6 +6,7 @@
 
 - **15 Oct 2026 (b)** — Landing page: "About this session" paragraph replaces the learning-objectives list (editable in Settings).
 - **15 Oct 2026 (c)** — First-time visitors get a "fresh start": real date and time, no bookings, RSVPs open until 23 Oct 12:00; demo staff PINs still work. Demo controls has a "Fresh start" button for browsers holding older demo data. The RSVP box now sits above the event details on all screen sizes. Banner warns that bookings stay on the device.
+- **16 Oct 2026** — Shared test database (Supabase project `wap-cpd-test`, region EU). The rules engine now also runs on the server (Edge Function `cpd`) against one shared copy of the data, locked per change, so simultaneous bookings cannot overbook. Staff sign in with email and password (Supabase Auth); roles come from the staff list (WAP Administrator, Sarah RC-Empire as PA). Attendees receive only their own booking. PA does not receive audit history or feedback answers. Hourly snapshots kept in `app_state_history`. The website defaults to the shared database; practice mode (fictional data, simulated clock, this device only) stays available. Server deployed automatically from GitHub when `SUPABASE_ACCESS_TOKEN` is saved as a repository secret.
 
 ## Decisions taken
 - Pending offers hold places. Offers go in queue order; the administrator may skip the queue with a recorded reason. Offers last 24 h, 2 h on the event day, and are capped at event start (18:00). Windows under 30 minutes are refused and handled at the desk as late cases.
@@ -19,14 +20,24 @@
 - Messages: prepared or manually shared only. "Sent" and "Delivery confirmed" are refused until a live integration exists.
 - Demo and real data use separate storage keys. Real-data mode uses the real clock and starts with administrator setup.
 
+## Shared-database design (16 Oct 2026)
+- One row (`app_state`, id `main`) holds the event data as JSON; every change runs in a transaction with `SELECT … FOR UPDATE`, then saves. Suits one event of ~60 attendees; revisit for much larger events.
+- The website tries each change locally first (instant form errors), then sends the list of rules-engine calls to the server, which runs them again on the real data. The server's result is what counts. The browser's "actor" is always replaced by the signed-in staff member.
+- Public visitors may only run: createBooking (public channel), and updateDetails / cancelBooking / respondToOffer / submitFeedback with their private token.
+- Tables have row-level security on and no access for the public website key; only the server program (database owner connection) reads or writes them.
+- Free Supabase projects pause after about a week without activity.
+- Anyone can submit RSVPs to the test database (no spam protection yet).
+
 ## Known limits before live use
-- Data lives in one browser. A shared server database with server-side transactions is required for real attendees and multiple staff devices.
-- PIN sign-in is not real authentication.
+- Practice mode data lives on one device only (by design).
 - No live WhatsApp or email sending; no offline mode.
 - QR scanning reads a photo (camera capture via file input), not a live camera feed.
 - HPCNA requirements (certificate content, register submission within one month per Form 3) have not been checked against current official guidance.
 - The public page is visible to anyone with the link. It holds no attendee data (that stays in each visitor's browser), and asks search engines not to index it.
 
-## Tests (15 Oct 2026, on the GitHub build)
+## Tests (16 Oct 2026)
 - 21 Node rules tests pass, including 70 simultaneous registrations for 50 places with no overbooking.
-- 65 Playwright browser checks pass (updated 15 Oct (c)) on desktop and phone sizes: RSVP, waiting list and offers, PA permission refusals, duplicates, check-in, completion, QR photo check-out, early-departure review, certificate blocking and release, PDF and CSV downloads, persistence after reload, separate real-data mode, no horizontal scrolling on phone.
+- 8 server tests against a local Postgres: tables and staff created on first use, public view has no personal data, attendees see only their own booking, staff-only actions refused for the public and for forged staff claims, PA vs administrator permissions, all-or-nothing saves, server-side deadline and offer expiry, 70 simultaneous bookings for 50 places (exactly 50 booked, 20 waiting, none lost), anonymous feedback, hourly snapshot.
+- 31 browser checks on the shared database (local stand-in): RSVP on one device seen on another, private links across devices, staff email sign-in, wrong password, PA registration seen by others, PA restrictions, admin audit and staff management, non-staff account, attendee cancellation, practice mode separation, phone layouts.
+- Server program also started under Deno (the Supabase runtime) against local Postgres.
+- 64 practice-mode browser checks on desktop and phone sizes: RSVP, waiting list and offers, PA permission refusals, duplicates, check-in, completion, QR photo check-out, early-departure review, certificate blocking and release, PDF and CSV downloads, persistence after reload, separate real-data mode, no horizontal scrolling on phone.

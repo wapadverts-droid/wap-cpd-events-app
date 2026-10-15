@@ -66,6 +66,8 @@ a { color: var(--accent); }
 .modebar { font-size: 0.86rem; padding: 7px 16px; display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap; text-align: center; }
 .modebar.demo { background: var(--demo-bg); color: var(--demo); }
 .modebar.live { background: var(--warn-bg); color: var(--warn); }
+.modebar.test { background: var(--info-bg); color: var(--info); }
+.chip-test { background: var(--info-bg); color: var(--info); }
 .modebar button { font-size: 0.86rem; }
 @media (max-width: 600px) { .modebar .mb-long { display: none; } .modebar { padding: 6px 12px; gap: 6px; } }
 
@@ -1335,11 +1337,25 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
     const name = clean(data.name);
     if (name.length < 2) fail('invalid', 'Enter the staff member’s name.');
     if (!ROLES[data.role]) fail('invalid', 'Choose a role.');
-    if (!/^[0-9a-f]{64}$/.test(data.pinHash || '')) fail('invalid', 'Set a PIN of at least 4 digits.');
-    const rec = { id: 's' + (state.staff.length + 1) + randStr(ctx, 4, ALPHA), name, role: data.role, pinHash: data.pinHash, active: true, createdAt: ctx.now };
+    const email = clean(data.email).toLowerCase();
+    if (data.email != null) {
+      // shared-database version: staff sign in with email and password
+      if (!emailOk(email)) fail('invalid', 'Enter the staff member’s email address.');
+      if (state.staff.some(x => (x.email || '') === email)) fail('invalid', 'A staff member with this email already exists.');
+    } else if (!/^[0-9a-f]{64}$/.test(data.pinHash || '')) fail('invalid', 'Set a PIN of at least 4 digits.');
+    const rec = { id: 's' + (state.staff.length + 1) + randStr(ctx, 4, ALPHA), name, role: data.role, active: true, createdAt: ctx.now };
+    if (data.email != null) rec.email = email; else rec.pinHash = data.pinHash;
     state.staff.push(rec);
-    audit(state, ctx, s ? whoStaff(s) : { kind: 'system', name: 'First-time setup' }, 'Staff account added', '', `${name} · ${ROLES[data.role]}`);
+    audit(state, ctx, s ? whoStaff(s) : { kind: 'system', name: 'First-time setup' }, 'Staff account added', '', `${name} · ${ROLES[data.role]}${rec.email ? ' · ' + rec.email : ''}`);
     return rec;
+  }
+  function setLogo(state, ctx, actor, dataUrl) {
+    const s = need(state, actor, 'settings.edit');
+    if (dataUrl == null) { delete state.event.logo; audit(state, ctx, whoStaff(s), 'Logo reset to supplied logo', '', ''); return null; }
+    if (typeof dataUrl !== 'string' || !/^data:image\/(png|jpeg);base64,/.test(dataUrl) || dataUrl.length > 900000) fail('invalid', 'Use a PNG or JPEG image under 600 KB.');
+    state.event.logo = dataUrl;
+    audit(state, ctx, whoStaff(s), 'Logo replaced', '', '');
+    return null;
   }
   function setStaffActive(state, ctx, actor, staffId, active) {
     const s = need(state, actor, 'staff.manage');
@@ -1396,7 +1412,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
     validateFeedback, submitFeedback, recordPaperFeedback, addPaperResponse, feedbackSummary,
     approvalComplete, blockers, certStatus, currentCert, releaseCertificate, releaseAllReady, correctCertificate, certByToken,
     messageText, prepareMessage, setMessageStatus,
-    updateEvent, updateApproval, updateSignatory, addStaff, setStaffActive, resetPin,
+    updateEvent, updateApproval, updateSignatory, addStaff, setStaffActive, resetPin, setLogo,
     stats, bookingByToken, findBooking, fullName, prng, HOUR, MIN, DAY
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
@@ -1909,6 +1925,132 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
   root.CPDPdf = { certificate, register, survey, registrationForm, checkinList };
 })(window);
 
+/* Connection to the shared database (Supabase). Both values are public by design:
+ * they identify the project; all access rules are enforced by the server program. */
+window.WAPCPD_CONFIG = {
+  supabaseUrl: 'https://ezsqpmlmtrmovnikmxrs.supabase.co',
+  supabaseKey: 'sb_publishable_pyqhJtDNu1ZzSgYLTokh5A_1velMgFW',
+  functionName: 'cpd'
+};
+
+/* Shared-database connection for the website.
+ *  - createAuth: staff sign-in with email and password (Supabase Auth).
+ *  - createRemoteStore: sends changes to the server program and receives the data
+ *    this visitor is allowed to see.
+ *
+ * How a change is sent: the website's existing action code runs as before, but the
+ * rules-engine functions it calls are recorded (and also tried locally, so form
+ * errors appear instantly). The recorded calls are then sent to the server, which
+ * runs them again on the real shared data inside a locked transaction. The server's
+ * answer is what counts. */
+(function (root) {
+  'use strict';
+  const RuleErr = (code, message) => { const e = new Error(message); e.code = code; e.name = 'RuleError'; return e; };
+
+  // Rules-engine functions that change data (others are read-only helpers).
+  const MUTATORS = ['createBooking', 'updateDetails', 'cancelBooking', 'makeOffer', 'respondToOffer', 'confirmLate', 'allocateContingencyFor',
+    'releaseUnused', 'reinstate', 'recordArrival', 'undoArrival', 'confirmCompletion', 'recordEarlyDeparture', 'reviewEarlyDeparture',
+    'undoCompletion', 'flagException', 'resolveException', 'resolveDuplicate', 'resolveHpcna', 'markDetailsChecked', 'submitFeedback',
+    'recordPaperFeedback', 'addPaperResponse', 'releaseCertificate', 'releaseAllReady', 'correctCertificate', 'prepareMessage',
+    'setMessageStatus', 'updateEvent', 'updateApproval', 'updateSignatory', 'addStaff', 'setStaffActive', 'setLogo', 'resetPin', 'login', 'logout'];
+
+  function createAuth(cfg, storage) {
+    const KEY = 'wapcpd:auth';
+    let s = null, refreshing = null;
+    try { s = JSON.parse(storage.getItem(KEY) || 'null'); } catch (e) { s = null; }
+    function save(x) { s = x; try { if (x) storage.setItem(KEY, JSON.stringify(x)); else storage.removeItem(KEY); } catch (e) { /* ignore */ } }
+    async function tokenReq(grant, body) {
+      let r;
+      try {
+        r = await fetch(cfg.supabaseUrl + '/auth/v1/token?grant_type=' + grant, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', apikey: cfg.supabaseKey }, body: JSON.stringify(body)
+        });
+      } catch (e) { throw RuleErr('network', 'Could not reach the sign-in service. Check your internet connection and try again.'); }
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if (grant === 'password') {
+          const bad = d.error_code === 'invalid_credentials' || d.error === 'invalid_grant' || r.status === 400;
+          throw RuleErr('auth', bad ? 'Wrong email or password.' : (d.msg || d.error_description || d.message || 'Sign-in failed.'));
+        }
+        throw RuleErr('signed_out', 'Your sign-in has expired. Please sign in again.');
+      }
+      save({ access: d.access_token, refresh: d.refresh_token, exp: Date.now() + (Number(d.expires_in) || 3600) * 1000, email: (d.user && d.user.email) || body.email || (s && s.email) || '' });
+    }
+    return {
+      email: () => (s ? s.email : null),
+      signedIn: () => !!s,
+      async signIn(email, password) { await tokenReq('password', { email: String(email || '').trim(), password: String(password || '') }); },
+      async accessToken() {
+        if (!s) return null;
+        if (Date.now() > s.exp - 60000) {
+          if (!refreshing) refreshing = tokenReq('refresh_token', { refresh_token: s.refresh }).catch(() => save(null)).finally(() => { refreshing = null; });
+          await refreshing;
+        }
+        return s ? s.access : null;
+      },
+      async signOut() {
+        const t = s && s.access; save(null);
+        if (t) { try { await fetch(cfg.supabaseUrl + '/auth/v1/logout', { method: 'POST', headers: { apikey: cfg.supabaseKey, Authorization: 'Bearer ' + t } }); } catch (e) { /* ignore */ } }
+      },
+      clear() { save(null); }
+    };
+  }
+
+  function createRemoteStore(o) {
+    const { cfg, auth, C, getToken, onView } = o;
+    const url = cfg.supabaseUrl + '/functions/v1/' + (cfg.functionName || 'cpd');
+    async function post(body) {
+      const token = getToken();
+      body.token = token;
+      const headers = { 'Content-Type': 'application/json', apikey: cfg.supabaseKey };
+      const at = await auth.accessToken();
+      if (at) headers.Authorization = 'Bearer ' + at;
+      let r, data;
+      try { r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) }); }
+      catch (e) { throw RuleErr('network', 'Could not reach the server. Check your internet connection and try again.'); }
+      try { data = await r.json(); } catch (e) { throw RuleErr('server', 'The server is not responding properly. Please try again in a moment.'); }
+      if (data && data.error && data.error.code === 'signed_out') auth.clear();
+      if (!data || !data.ok) {
+        const er = (data && data.error) || {};
+        const e = RuleErr(er.code || 'server', er.message || 'The server had a problem. Please try again.');
+        if (er.errors) e.errors = er.errors;
+        throw e;
+      }
+      if (data.view) onView(data.view, token);
+      return data;
+    }
+    return {
+      remote: true, key: null,
+      async refresh() { return (await post({ op: 'view' })).view; },
+      async transact(fn, current) {
+        if (!current) throw RuleErr('loading', 'Still loading. Please try again in a moment.');
+        const draft = JSON.parse(JSON.stringify(current));
+        const calls = [], locals = [], saved = {};
+        for (const name of MUTATORS) {
+          const orig = C[name];
+          if (typeof orig !== 'function') continue;
+          saved[name] = orig;
+          C[name] = function (st, ctx, ...args) {
+            const copy = JSON.parse(JSON.stringify(args, (k, v) => (v === undefined ? null : v)));
+            const r = orig.call(this, st, ctx, ...args); // try locally first: same rules, instant errors
+            calls.push({ fn: name, args: copy });
+            locals.push(r);
+            return r;
+          };
+        }
+        let ret;
+        try { ret = fn(draft); } finally { for (const k of Object.keys(saved)) C[k] = saved[k]; }
+        if (!calls.length) return { result: ret, state: current };
+        const d = await post({ op: 'act', calls });
+        const result = (locals.length && ret === locals[locals.length - 1]) ? d.results[d.results.length - 1] : ret;
+        return { result, state: d.view };
+      }
+    };
+  }
+
+  root.CPDRemote = { createAuth, createRemoteStore, MUTATORS };
+})(window);
+
 /* WAP CPD Event App — user interface. All rule decisions go through CPD (core.js). */
 (function () {
   'use strict';
@@ -1928,8 +2070,12 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
   let SESS;
   try { SESS = window.sessionStorage; SESS.setItem('__t', '1'); SESS.removeItem('__t'); } catch (e) { SESS = memStorage; }
 
+  const CFG = window.WAPCPD_CONFIG || null;
+  const REMOTE_OK = !!(CFG && CFG.supabaseUrl && CFG.supabaseKey && window.CPDRemote);
+  const AUTH = REMOTE_OK ? window.CPDRemote.createAuth(CFG, STORAGE) : null;
+  function initialMode() { const m = pget('mode', REMOTE_OK ? 'shared' : 'demo'); return m === 'shared' ? (REMOTE_OK ? 'shared' : 'demo') : (m === 'live' ? 'live' : 'demo'); }
   const A = {
-    mode: pget('mode', 'demo') === 'live' ? 'live' : 'demo',
+    mode: initialMode(), skew: 0, viewTok: null, loadError: null, loading: false,
     store: null, state: null, session: null, clock: null,
     ui: { q: '', status: 'all', prog: 'all', flag: 'all', sort: 'name', ciMode: 'arrival', ciQ: '', auditQ: '', msgStatus: 'all', msgType: 'all', lastResult: null },
     forms: {}, modal: null, afterLogin: null, flash: null
@@ -1940,11 +2086,34 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
   const clockKey = () => 'wapcpd:clock:' + A.mode;
   function loadClock() { try { A.clock = A.mode === 'demo' ? JSON.parse(STORAGE.getItem(clockKey()) || 'null') : null; } catch (e) { A.clock = null; } }
   function setClock(ms) { A.clock = ms == null ? null : { at: ms, setAt: Date.now() }; try { STORAGE.setItem(clockKey(), JSON.stringify(A.clock)); } catch (e) { /* ignore */ } }
-  const now = () => (A.mode === 'demo' && A.clock && A.clock.at) ? A.clock.at + (Date.now() - A.clock.setAt) : Date.now();
+  const isRemote = () => A.mode === 'shared';
+  const now = () => isRemote() ? Date.now() + A.skew : (A.mode === 'demo' && A.clock && A.clock.at) ? A.clock.at + (Date.now() - A.clock.setAt) : Date.now();
   const ctx = () => ({ now: now(), rand: rnd });
 
   // ---------- data set ----------
+  function currentToken() {
+    const h = decodeURIComponent(location.hash.slice(1) || '');
+    if (/^[mf]-/.test(h)) return { kind: 'booking', value: h.slice(2) };
+    if (/^c-/.test(h)) return { kind: 'cert', value: h.slice(2) };
+    return null;
+  }
+  function onView(v, tok) {
+    A.state = v; A.skew = (v.now || Date.now()) - Date.now(); A.viewTok = JSON.stringify(tok || null); A.loadError = null;
+    A.session = v.sessions && v.sessions.remote ? 'remote' : null;
+  }
+  async function refresh() {
+    if (!isRemote()) return;
+    A.loading = true;
+    try { await A.store.refresh(); } catch (e) { A.loadError = e; if (e.code === 'signed_out') { A.session = null; toast(e.message, 'bad'); } }
+    finally { A.loading = false; }
+  }
   function openStore() {
+    if (isRemote()) {
+      A.store = window.CPDRemote.createRemoteStore({ cfg: CFG, auth: AUTH, C, getToken: currentToken, onView });
+      A.state = null; A.session = null; A.clock = null;
+      refresh().then(() => render());
+      return;
+    }
     A.store = window.CPDStore.createStore({ storage: STORAGE, key: 'wapcpd:data:' + A.mode, locks: (navigator.locks || null) });
     A.state = A.store.read();
     loadClock();
@@ -1966,6 +2135,8 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
   const me = () => C.staffFor(A.state, actor());
   const can = p => C.can(A.state, actor(), p);
   const S = () => A.state, E = () => A.state.event, T = () => C.times(A.state.event);
+  const isDemoData = () => isRemote() ? !!(A.state && A.state.mode === 'demo') : A.mode === 'demo';
+  const pubSummary = () => (S().summary && S().viewKind !== 'staff') ? S().summary : C.publicSummary(S(), now());
   const tz = () => E().timezone;
   const F = ms => C.fmt(ms, tz());
   const FT = ms => C.fmtTime(ms, tz());
@@ -1974,7 +2145,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
   async function run(fn, okMsg, opts) {
     opts = opts || {};
     try {
-      const r = await A.store.transact(st => { const c = ctx(); C.processExpiries(st, c); return fn(st, c); });
+      const r = await A.store.transact(st => { const c = ctx(); C.processExpiries(st, c); return fn(st, c); }, A.state);
       A.state = r.state;
       if (opts.form) delete A.forms[opts.form];
       if (okMsg) toast(typeof okMsg === 'function' ? okMsg(r.result) : okMsg, 'ok');
@@ -2079,15 +2250,20 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
     return `<header class="topbar"><div class="topbar-in">
       <a class="brand" href="#home"><img src="${logo()}" alt="WAP Medical Supplies logo"><div><b>WAP CPD Events</b><span>${esc(E().provider)} · ${esc(E().providerNumber)}</span></div></a>
       <div class="top-actions">
-        <span class="chip ${A.mode === 'demo' ? 'chip-demo' : 'chip-live'}">${A.mode === 'demo' ? 'DEMO DATA' : 'REAL DATA · this browser'}</span>
+        ${isRemote() ? (S().dataset === 'live' ? '' : '<span class="chip chip-test">TEST DATABASE</span>') : `<span class="chip ${A.mode === 'demo' ? 'chip-demo' : 'chip-live'}">${A.mode === 'demo' ? 'PRACTICE · this device' : 'REAL DATA · this browser'}</span>`}
         ${staff ? `<a class="btn btn-s btn-ghost" href="#home">Attendee view</a>` : `<a class="btn btn-s btn-ghost" href="#${s ? 's-dash' : 'staff'}">${s ? 'Staff dashboard' : 'Staff sign-in'}</a>`}
         ${s && staff ? `<button class="btn btn-s btn-ghost" data-act="logout">Sign out</button>` : ''}
       </div></div></header>`;
   }
   function modebar() {
+    if (isRemote()) {
+      if (S().dataset === 'live') return '';
+      return `<div class="modebar test" role="note"><span><b>Test version with shared database.</b> Use made-up attendee details only. Test data will be cleared before real bookings open.</span>
+        <button class="btn btn-s" data-act="demo-panel">Practice mode</button></div>`;
+    }
     if (A.mode === 'demo') {
       const sim = A.clock && A.clock.at;
-      return `<div class="modebar demo" role="note"><span>${S().scenario === 'fresh' ? '<b>Test version.</b> Bookings are saved on this device only and do not reach the organisers yet.' : '<b>Demo · fictional attendees.</b><span class="mb-long"> Data is saved in this browser only.</span>'}</span>
+      return `<div class="modebar demo" role="note"><span>${S().scenario === 'fresh' ? '<b>Practice mode.</b> Bookings are saved on this device only and do not reach the organisers.' : '<b>Practice mode · fictional attendees.</b><span class="mb-long"> Saved on this device only, not in the shared database.</span>'}</span>
         <span>${sim ? 'Simulated time' : 'Real time'}: <b class="tnum">${F(now())}</b></span>
         <button class="btn btn-s" data-act="demo-panel">Demo controls</button></div>`;
     }
@@ -2096,10 +2272,29 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
   }
   function footer() {
     return `<footer class="foot">${esc(E().provider)} · CPD provider ${esc(E().providerNumber)} · Organiser ${esc(E().organiser)}, <span class="mono">${esc(E().phone)}</span><br>
-      Prototype: messages are prepared, not sent automatically. Certificates are not valid until HPCNA approval details are entered and the administrator releases them.${PERSISTENT ? '' : '<br><b>Browser storage is blocked: changes will be lost when you close this page.</b>'}</footer>`;
+      ${isRemote() ? '' : 'Practice mode: data stays on this device. '}Messages are prepared, not sent automatically. Certificates are not valid until HPCNA approval details are entered and the administrator releases them.${PERSISTENT || isRemote() ? '' : '<br><b>Browser storage is blocked: changes will be lost when you close this page.</b>'}</footer>`;
   }
 
+  function loadingPage() {
+    const err = A.loadError;
+    return `<main class="wrap" id="main"><div class="narrow panel stack-s" style="margin-top:40px">${err
+      ? `<h1>Cannot load the event</h1><p>${esc(err.message)}</p><div class="row"><button class="btn btn-primary" data-act="retry">Try again</button><button class="btn" data-act="mode" data-mode="demo">Use practice mode instead</button></div>
+         <p class="small muted">Practice mode works without the shared database, with data kept on this device only.</p>`
+      : '<p>Loading WAP CPD Events…</p>'}</div></main>`;
+  }
+  function needsFetch() {
+    if (!isRemote() || !A.state) return false;
+    if (A.state.viewKind === 'staff') return false;
+    return JSON.stringify(currentToken()) !== A.viewTok;
+  }
   function render() {
+    const app0 = $('#app');
+    if (isRemote() && !A.state) { app0.innerHTML = loadingPage(); return; }
+    if (needsFetch()) {
+      if (!A.loading) refresh().then(() => render());
+      app0.innerHTML = topbar() + modebar() + loadingPage() + footer();
+      return;
+    }
     let v;
     try { v = view(); } catch (e) { console.error(e); v = { html: `<div class="panel"><h2>Something went wrong</h2><p>${esc(e.message)}</p></div>` }; }
     const app = $('#app');
@@ -2140,7 +2335,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
 
   // ---------- PUBLIC: home ----------
   function vHome() {
-    const e = E(), t = T(), n = now(), ps = C.publicSummary(S(), n);
+    const e = E(), t = T(), n = now(), ps = pubSummary();
     let status;
     if (ps.status === 'open') status = `<div class="eyebrow">Advance booking</div><div><span class="big tnum">${ps.publicFree}</span> <span class="muted">of ${ps.publicCap} places left</span></div>
       <div class="meter ${ps.publicFree < 6 ? 'full' : ''}"><i style="width:${(100 * (ps.publicCap - ps.publicFree) / ps.publicCap).toFixed(1)}%"></i></div>
@@ -2216,7 +2411,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
   }
 
   function vRsvp() {
-    const ps = C.publicSummary(S(), now()), t = T();
+    const ps = pubSummary(), t = T();
     if (!ps.open) return { title: 'RSVP', html: `<div class="narrow panel stack"><h1>Online RSVPs are closed</h1><p>Online RSVPs closed on ${F(t.rsvpClose)}. Please contact ${esc(E().organiser)} on <span class="mono">${esc(E().phone)}</span>. Staff can still register you if a place remains.</p><a class="btn" href="#home">Back to event details</a></div>` };
     const fs = A.forms.rsvp || {};
     return { title: 'RSVP', html: `<div class="narrow stack">
@@ -2244,12 +2439,12 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
   }
   function vManage(token) {
     const b = C.bookingByToken(S(), token);
-    if (!b) return { title: 'Booking', html: `<div class="narrow panel stack"><h1>Booking not found</h1><p>This link is not valid in this browser. Booking links in this prototype only work in the browser where the booking was made, because data is stored locally.</p><a class="btn" href="#home">Event details</a></div>` };
+    if (!b) return { title: 'Booking', html: `<div class="narrow panel stack"><h1>Booking not found</h1><p>${isRemote() ? 'This booking link is not valid. Please check that you opened the full link from your confirmation message, or contact the organiser.' : 'This link is not valid on this device. In practice mode, booking links only work on the device where the booking was made.'}</p><a class="btn" href="#home">Event details</a></div>` };
     const e = E(), t = T(), n = now(), cert = C.currentCert(S(), b), locked = !!cert;
     const isNew = A.flash === b.token; A.flash = null;
     let banner = '';
     if (b.status === 'confirmed') banner = `<div class="alert ok"><div><b>${isNew ? 'Your place is booked.' : 'Your place is confirmed.'}</b> ${b.pool === 'contingency' ? 'Allocated by the organiser.' : ''} Show the QR code below at registration from ${esc(e.programme[0].start)}.</div></div>`;
-    else if (b.status === 'waitlisted') { const pos = C.waitlist(S()).findIndex(x => x.id === b.id) + 1; banner = `<div class="alert warn"><div><b>${isNew ? 'You are on the waiting list.' : 'Waiting list'} — position ${pos}.</b> If a place becomes free, you will receive an offer with a time limit to accept.</div></div>`; }
+    else if (b.status === 'waitlisted') { const pos = S().waitlistPos || (C.waitlist(S()).findIndex(x => x.id === b.id) + 1); banner = `<div class="alert warn"><div><b>${isNew ? 'You are on the waiting list.' : 'Waiting list'} — position ${pos}.</b> If a place becomes free, you will receive an offer with a time limit to accept.</div></div>`; }
     else if (b.status === 'offered') banner = `<div class="alert info"><div><b>A place is available for you.</b> Accept by <b>${F(b.offer.expiresAt)}</b> (Namibia time), or the place goes to the next person.</div>
         <div class="row"><button class="btn btn-ok" data-act="pub-accept" data-token="${esc(token)}">Accept the place</button><button class="btn" data-act="pub-decline" data-token="${esc(token)}">Decline</button></div></div>`;
     else banner = `<div class="alert bad"><div><b>${C.STATUS_LABEL[b.status]}.</b> ${b.status === 'released' ? 'Your place was released because you had not arrived after the presentation started. Please speak to the registration desk.' : 'This booking is no longer active. Contact the organiser if this is a mistake.'}</div></div>`;
@@ -2301,7 +2496,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
   }
   function vFeedback(token) {
     const b = C.bookingByToken(S(), token), t = T(), n = now();
-    if (!b) return { title: 'Evaluation', html: `<div class="narrow panel"><h1>Link not valid</h1><p>This evaluation link is not valid in this browser.</p></div>` };
+    if (!b) return { title: 'Evaluation', html: `<div class="narrow panel"><h1>Link not valid</h1><p>This evaluation link is not valid${isRemote() ? '' : ' on this device'}.</p></div>` };
     const head = `<div><div class="eyebrow">CPD Evaluation Survey</div><h1>${esc(E().topic)}</h1><p class="muted">${esc(E().provider)} – Clinical Update · ${esc(C.fmtDate(t.eventStart, tz()))}</p></div>`;
     if (b.feedback) return { title: 'Evaluation', html: `<div class="narrow stack">${head}<div class="alert ok"><div><b>Thank you, ${esc(b.firstName)}. Your evaluation has been received.</b> Your certificate will be available after the remaining checks and release by the administrator.</div></div><a class="btn" href="#m-${esc(token)}">Back to my booking</a></div>` };
     if (b.status !== 'confirmed') return { title: 'Evaluation', html: `<div class="narrow stack">${head}<div class="alert bad"><div>The evaluation is for booked attendees.</div></div></div>` };
@@ -2318,7 +2513,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
     const e = E(), approval = cert ? cert.approval : e.approval;
     const sample = !C.approvalComplete({ approval });
     const snap = cert ? cert.snapshot : { firstName: b.firstName, lastName: b.lastName, hpcna: b.hpcna || (b.hpcnaStatus === 'provided' ? '' : 'Not provided') };
-    const demo = A.mode === 'demo';
+    const demo = isDemoData();
     const wm = sample ? 'SAMPLE — NOT VALID FOR CPD' : (!cert ? 'PREVIEW — NOT ISSUED' : '');
     const dateStr = C.fmt(T().eventStart, tz(), { day: 'numeric', month: 'long', year: 'numeric' });
     const blank = s => esc(s) || '______________';
@@ -2341,23 +2536,38 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
   }
   function vCertPublic(token) {
     const r = C.certByToken(S(), token);
-    if (!r) return { title: 'Certificate', html: `<div class="narrow panel"><h1>Certificate link not valid</h1><p>This link is not valid in this browser.</p></div>` };
+    if (!r) return { title: 'Certificate', html: `<div class="narrow panel"><h1>Certificate link not valid</h1><p>This link is not valid${isRemote() ? '' : ' on this device'}. Please use the latest link sent to you, or contact the organiser.</p></div>` };
     if (r.cert.status !== 'current') return { title: 'Certificate', html: `<div class="narrow panel stack"><h1>This certificate was replaced</h1><p>A corrected version was issued on ${F(r.cert.supersededAt)}. Please use the newest link sent to you, or open your booking link.</p></div>` };
     return { title: 'Certificate', html: `<div class="stack" style="max-width:980px;margin:0 auto">
       <div><div class="eyebrow">Certificate of attendance</div><h1>${esc(r.cert.snapshot.firstName + ' ' + r.cert.snapshot.lastName)}</h1>
       <p class="muted">Certificate no. <span class="mono">${esc(r.cert.number)}</span>${r.cert.version > 1 ? ' · version ' + r.cert.version : ''} · issued ${F(r.cert.issuedAt)}</p></div>
       ${certSheet(r.booking, r.cert)}
       <div class="row"><button class="btn btn-primary btn-xl" data-act="cert-pdf" data-cert="${esc(r.cert.id)}">Download PDF</button></div>
-      <p class="small muted">Keep this private link safe. ${A.mode === 'demo' ? 'This is fictional demo data and the certificate is marked not valid.' : ''}</p></div>` };
+      <p class="small muted">Keep this private link safe. ${isDemoData() ? 'This is test data and the certificate is marked not valid.' : ''}</p></div>` };
   }
   function certPdf(b, cert) {
-    const doc = Pdf.certificate(S(), { booking: b, cert, demo: A.mode === 'demo' });
+    const doc = Pdf.certificate(S(), { booking: b, cert, demo: isDemoData() });
     const name = `${(cert ? cert.number : 'PREVIEW-' + b.ref)}_${b.lastName}_${b.firstName}`.replace(/[^A-Za-z0-9_-]+/g, '-') + '.pdf';
     return pdfSave(doc, name);
   }
 
   // ---------- STAFF: login ----------
+  function vLoginShared() {
+    const fs = A.forms.login || {};
+    const notStaff = AUTH.signedIn() && S().signedInNotStaff;
+    if (notStaff) return { title: 'Staff sign-in', html: `<div class="narrow stack" style="max-width:520px"><div><div class="eyebrow">Staff area</div><h1>Not on the staff list</h1></div>
+      <div class="panel stack-s"><p>You are signed in as <b>${esc(AUTH.email())}</b>, but this email is not on the WAP staff list. Ask the administrator to add it in Settings.</p>
+      <div><button class="btn" data-act="logout">Sign out</button></div></div></div>` };
+    return { title: 'Staff sign-in', html: `<div class="narrow stack" style="max-width:520px"><div><div class="eyebrow">Staff area</div><h1>Sign in</h1></div>
+      <form class="panel form" data-form="login" novalidate>${fs.message ? `<div class="form-errors" role="alert">${esc(fs.message)}</div>` : ''}
+        <div class="field"><label for="lg-email">Email</label><input type="email" id="lg-email" name="email" autocomplete="username" value="${esc(fs.email || '')}"></div>
+        <div class="field"><label for="lg-pw">Password</label><input type="password" id="lg-pw" name="password" autocomplete="current-password"></div>
+        <button class="btn btn-primary btn-xl" type="submit">Sign in</button>
+        <p class="small muted">Staff accounts are set up by the administrator. Forgotten your password? Ask the administrator to reset it.</p>
+      </form></div>`, after: () => { const p = document.getElementById(fs.email ? 'lg-pw' : 'lg-email'); if (p) p.focus({ preventScroll: true }); } };
+  }
   function vLogin() {
+    if (isRemote()) return vLoginShared();
     const st = S();
     const active = st.staff.filter(s => s.active);
     if (!active.some(s => s.role === 'admin')) {
@@ -2588,7 +2798,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
         <section class="panel stack-s"><div class="row-between"><h2>Messages</h2>${can('message.prepare') ? `<div class="row"><select id="pm-type" aria-label="Message type"><option value="confirmation">Booking confirmation</option><option value="waitlist">Waiting-list notice</option><option value="offer">Offer</option><option value="reminder">Reminder</option><option value="feedback">Evaluation request</option>${cert && can('cert.resend') ? '<option value="certificate">Certificate link</option>' : ''}</select>${btn('prep-msg', 'Prepare', 'btn-s')}</div>` : ''}</div>
           ${msgs.length ? msgs.map(m => msgRow(m, b)).join('') : '<div class="empty">No messages prepared.</div>'}</section>
       </div>
-      <section class="panel"><h2>History</h2>${hist.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr></thead><tbody>${hist.map(a => `<tr><td class="small tnum" style="white-space:nowrap">${F(a.at)}</td><td class="small">${esc(a.who.name)}</td><td>${esc(a.action)}</td><td class="small">${esc(a.detail)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No history.</div>'}</section>` };
+      <section class="panel"><h2>History</h2>${hist.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr></thead><tbody>${hist.map(a => `<tr><td class="small tnum" style="white-space:nowrap">${F(a.at)}</td><td class="small">${esc(a.who.name)}</td><td>${esc(a.action)}</td><td class="small">${esc(a.detail)}</td></tr>`).join('')}</tbody></table></div>` : (S().restricted ? '<div class="empty">The history is visible to the administrator.</div>' : '<div class="empty">No history.</div>')}</section>` };
   }
   function msgRow(m, b) {
     const pill = { prepared: 'p-info', 'manually-shared': 'p-ok', sent: 'p-ok', delivered: 'p-ok' }[m.status];
@@ -2774,7 +2984,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
           ${admin ? `<form class="form" data-form="appr">${fs.message ? `<div class="form-errors">${esc(fs.message)}</div>` : ''}
             <div class="field"><label for="ap-num">Activity accreditation number</label><input type="text" id="ap-num" name="activityNumber" value="${esc(a.activityNumber)}"></div>
             <div class="two"><div class="field"><label for="ap-ceu">Approved CEUs</label><input type="text" id="ap-ceu" name="ceus" value="${esc(a.ceus)}"></div><div class="field"><label for="ap-lvl">Level</label><input type="text" id="ap-lvl" name="level" value="${esc(a.level)}"></div></div>
-            <div class="row"><button class="btn btn-primary" type="submit">Save approval details</button>${A.mode === 'demo' ? '<button class="btn" type="button" data-act="demo-approval">Fill fictional demo values</button>' : ''}</div>
+            <div class="row"><button class="btn btn-primary" type="submit">Save approval details</button>${isDemoData() ? '<button class="btn" type="button" data-act="demo-approval">Fill test values</button>' : ''}</div>
             ${a.enteredBy ? `<p class="small muted">Last saved by ${esc(a.enteredBy)}, ${F(a.enteredAt)}.</p>` : ''}</form>`
             : `<dl class="kv"><dt>Activity no.</dt><dd>${esc(a.activityNumber) || '—'}</dd><dt>CEUs</dt><dd>${esc(a.ceus) || '—'}</dd><dt>Level</dt><dd>${esc(a.level) || '—'}</dd></dl><p class="small muted">Only the administrator enters approval details.</p>`}
         </section>
@@ -2887,7 +3097,9 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
           <button class="btn" data-act="export" data-kind="messages">Messages (CSV)</button><button class="btn" data-act="export" data-kind="feedback">Anonymous evaluation answers (CSV)</button><button class="btn" data-act="export" data-kind="audit">Audit history (CSV)</button>
           <button class="btn" data-act="export" data-kind="marketing">Marketing opt-ins (CSV)</button>` : ''}</div>
         ${can('export.full') ? '' : '<p class="small muted">Full exports are administrator-only.</p>'}</section>
-      ${can('data.restore') ? `<section class="panel stack-s"><h2>Backup and restore</h2><p class="small">A backup file holds this whole data set (${A.mode === 'demo' ? 'demo' : 'real'} data). Restoring replaces what is in this browser.</p>
+      ${can('data.restore') && isRemote() ? `<section class="panel stack-s"><h2>Backup</h2><p class="small">Download a copy of all shared data. The server also keeps an automatic snapshot every hour.</p>
+        <div class="row"><button class="btn" data-act="export" data-kind="backup">Download backup (JSON)</button></div></section>` : ''}
+      ${can('data.restore') && !isRemote() ? `<section class="panel stack-s"><h2>Backup and restore</h2><p class="small">A backup file holds this whole data set (${A.mode === 'demo' ? 'demo' : 'real'} data). Restoring replaces what is in this browser.</p>
         <div class="row"><button class="btn" data-act="export" data-kind="backup">Download backup (JSON)</button><label class="btn" for="restore-file" style="cursor:pointer">Restore from backup…</label><input type="file" id="restore-file" accept="application/json,.json" data-change="restore" hidden></div></section>` : ''}
       ${can('audit.view') ? `<section class="panel stack-s"><h2>Audit history</h2><input type="search" id="au-q" placeholder="Search actions, references, staff" value="${esc(A.ui.auditQ)}" data-input="audit-q" aria-label="Search audit">
         <div id="audit-results">${auditTable(audit)}</div></section>` : '<section class="panel"><p class="muted">The audit history is visible to the administrator.</p></section>'}`,
@@ -2970,13 +3182,13 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
       </form>
       <section class="panel stack-s"><h2>Logo</h2><div class="row"><img src="${logo()}" alt="Current logo" style="width:90px;background:#fff;border-radius:8px;padding:4px"><label class="btn" for="logo-file" style="cursor:pointer">Replace logo…</label><input type="file" id="logo-file" accept="image/png,image/jpeg" data-change="logo" hidden>${e.logo ? '<button class="btn" data-act="logo-reset">Use supplied logo</button>' : ''}</div></section>
       <section class="panel stack-s"><h2>Staff access</h2>
-        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>${S().staff.map(s => `<tr><td>${esc(s.name)}</td><td>${C.ROLES[s.role]}</td><td>${s.active ? '<span class="pill p-ok">Active</span>' : '<span class="pill p-none">Deactivated</span>'}</td>
-          <td><div class="row"><button class="btn btn-s" data-act="staff-toggle" data-id="${s.id}">${s.active ? 'Deactivate' : 'Reactivate'}</button><button class="btn btn-s" data-act="staff-pin" data-id="${s.id}">Reset PIN…</button></div></td></tr>`).join('')}</tbody></table></div>
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>${S().staff.map(s => `<tr><td>${esc(s.name)}${s.email ? `<div class="small muted">${esc(s.email)}</div>` : ''}</td><td>${C.ROLES[s.role]}</td><td>${s.active ? '<span class="pill p-ok">Active</span>' : '<span class="pill p-none">Deactivated</span>'}</td>
+          <td><div class="row"><button class="btn btn-s" data-act="staff-toggle" data-id="${s.id}">${s.active ? 'Deactivate' : 'Reactivate'}</button>${isRemote() ? '' : `<button class="btn btn-s" data-act="staff-pin" data-id="${s.id}">Reset PIN…</button>`}</div></td></tr>`).join('')}</tbody></table></div>
         <form class="form" data-form="staff"><h3>Add staff member</h3><div class="two"><div class="field"><label for="st-name">Name</label><input type="text" id="st-name" name="name"></div>
           <div class="field"><label for="st-role">Role</label><select id="st-role" name="role"><option value="pa">PA / Reception</option><option value="admin">Administrator</option></select></div></div>
-          <div class="field"><label for="st-pin">PIN (4–8 digits)</label><input type="password" id="st-pin" name="pin" inputmode="numeric" autocomplete="new-password"></div>
+          ${isRemote() ? '<div class="field"><label for="st-email">Email (their sign-in)</label><input type="email" id="st-email" name="email" autocomplete="off"></div>' : '<div class="field"><label for="st-pin">PIN (4–8 digits)</label><input type="password" id="st-pin" name="pin" inputmode="numeric" autocomplete="new-password"></div>'}
           <div><button class="btn btn-primary" type="submit">Add staff member</button></div></form>
-        <p class="small muted">PINs separate roles inside this prototype only. Before live use, staff need real accounts on a server.</p></section>` };
+        <p class="small muted">${isRemote() ? 'Adding someone here gives their email a role. They also need a login: in Supabase, open Authentication → Users → Add user, and create the same email with a password. Deactivating someone here removes their access immediately.' : 'Practice mode: PINs only separate roles on this device.'}</p></section>` };
   }
 
   // ---------- demo controls ----------
@@ -2985,7 +3197,14 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
     const presets = [['2026-10-05T10:00', 'Mon 5 Oct, 10:00 (bookings open)'], [`${d}T09:00`, 'Event day 09:00 (2-hour offers)'], [`${d}T11:58`, 'Event day 11:58 (2 min before RSVPs close)'],
       [`${d}T12:01`, 'Event day 12:01 (RSVPs closed)'], [`${d}T17:45`, 'Event day 17:45 (registration desk)'], [`${d}T18:06`, 'Event day 18:06 (release unused allowed)'],
       [`${d}T19:00`, 'Event day 19:00 (before end of Q&A)'], [`${d}T19:31`, 'Event day 19:31 (completion & evaluation)'], ['2026-10-24T10:00', 'Next day 10:00 (paper entry)']];
-    A.modal = { html: () => `<div class="modal-head"><div><div class="eyebrow">Prototype</div><h2>${A.mode === 'demo' ? 'Demo controls' : 'Data set'}</h2></div><button class="btn btn-s" data-act="close-modal">Close</button></div>
+    if (isRemote()) {
+      A.modal = { html: () => `<div class="modal-head"><div><div class="eyebrow">Test version</div><h2>Practice mode</h2></div><button class="btn btn-s" data-act="close-modal">Close</button></div>
+        <p>You are using the <b>shared test database</b>. Everything you do here is seen by other staff.</p>
+        <p>Practice mode uses fictional attendees and a simulated clock, saved on this device only. Use it to rehearse event night without affecting the shared data.</p>
+        <div class="row"><button class="btn btn-primary" data-act="mode" data-mode="demo">Switch to practice mode</button></div>` };
+      return renderModal();
+    }
+    A.modal = { html: () => `<div class="modal-head"><div><div class="eyebrow">Prototype</div><h2>${A.mode === 'demo' ? 'Practice controls' : 'Data set'}</h2></div><button class="btn btn-s" data-act="close-modal">Close</button></div>
       ${A.mode === 'demo' ? `<section class="stack-s"><h3>Load a scenario (replaces current demo data)</h3><div class="row">
         <button class="btn btn-primary" data-act="scenario" data-sc="fresh">Fresh start · real time, no bookings</button>
         <button class="btn" data-act="scenario" data-sc="booking">Booking phase · 12 Oct (2 places left)</button>
@@ -2995,23 +3214,26 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
         <div class="row">${presets.map(([v, l]) => `<button class="btn btn-s" data-act="clock" data-at="${v}">${l}</button>`).join('')}</div>
         <form class="row" data-form="clock"><input type="datetime-local" id="clk" name="at" style="max-width:260px" aria-label="Custom time"><button class="btn btn-s" type="submit">Set custom time</button><button class="btn btn-s" type="button" data-act="clock" data-at="real">Use real time</button></form></section>
       <section class="stack-s"><h3>Demo staff PINs</h3><p>Demo Administrator <span class="mono">1111</span> · Demo Reception (PA) <span class="mono">2222</span></p></section>` : ''}
-      <section class="stack-s"><h3>Data set</h3><p class="small">Demo and real data are kept separately in this browser. Neither is shared with other devices.</p>
-        <div class="row"><button class="btn ${A.mode === 'demo' ? 'btn-primary' : ''}" data-act="mode" data-mode="demo">Demo data (fictional)</button><button class="btn ${A.mode === 'live' ? 'btn-primary' : ''}" data-act="mode" data-mode="live">Real data (this browser only)</button></div>
-        ${A.mode === 'live' ? '' : '<p class="small muted">Real data mode always uses the real clock and starts empty. Use it only for trials until a shared server is connected.</p>'}</section>` };
+      <section class="stack-s"><h3>Data set</h3><p class="small">${REMOTE_OK ? 'Leave practice mode to use the shared test database that all staff see.' : 'Practice data is kept on this device only.'}</p>
+        <div class="row">${REMOTE_OK ? '<button class="btn btn-primary" data-act="mode" data-mode="shared">Back to the shared test database</button>' : ''}
+        ${A.mode === 'live' ? '<button class="btn" data-act="mode" data-mode="demo">Practice data (fictional)</button>' : ''}</div></section>` };
     renderModal();
   }
 
   // ---------- event handlers ----------
   const byId = id => S().bookings.find(x => x.id === id);
   const ACT = {
-    'logout': () => { A.store.transact(st => C.logout(st, ctx(), A.session)).catch(() => { }); setSession(null); go('home'); },
+    'logout': async () => {
+      if (isRemote()) { await AUTH.signOut(); A.session = null; A.state = null; go('home'); await refresh(); render(); return; }
+      A.store.transact(st => C.logout(st, ctx(), A.session)).catch(() => { }); setSession(null); go('home'); },
+    'retry': async () => { A.loadError = null; render(); await refresh(); render(); },
     'demo-panel': openDemoPanel,
     'close-modal': closeModal,
     'overlay': (el, ev) => { if (ev.target === el) closeModal(); },
     'copy': el => copy(el.dataset.text),
     'scenario': el => { loadScenario(el.dataset.sc); closeModal(); toast('Scenario loaded', 'ok'); go(el.dataset.sc === 'event' ? 'staff' : 'home'); },
     'clock': el => { const v = el.dataset.at; if (v === 'real') setClock(null); else setClock(Date.parse(v + ':00' + E().utcOffset)); closeModal(); expirySweep(); render(); toast('Time set: ' + F(now()), 'ok'); },
-    'mode': el => { const m = el.dataset.mode; if (m === A.mode) return closeModal(); A.mode = m; pset('mode', m); openStore(); closeModal(); go(m === 'live' ? 'staff' : 'home'); },
+    'mode': el => { const m = el.dataset.mode; if (m === A.mode) return closeModal(); A.mode = m; pset('mode', m); openStore(); closeModal(); go(m === 'live' ? 'staff' : 'home'); render(); },
     'chip': el => { A.ui[el.dataset.group] = el.dataset.val; render(); },
     'filter-people': el => { Object.assign(A.ui, { q: '', status: 'all', prog: 'all', flag: el.dataset.flag }); go('s-people'); },
     'open-person': el => go('s-p-' + el.dataset.id),
@@ -3091,7 +3313,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
     'pdf-regform': () => pdfSave(Pdf.registrationForm(S()), 'registration-form.pdf'),
     'pdf-checkin': () => pdfSave(Pdf.checkinList(S(), S().bookings.filter(b => b.status === 'confirmed').sort((a, b) => a.lastName.localeCompare(b.lastName))), 'desk-checkin-list.pdf'),
     'export': el => doExport(el.dataset.kind),
-    'logo-reset': () => run((st) => { delete st.event.logo; }, 'Supplied logo restored.'),
+    'logo-reset': () => run((st, c) => C.setLogo(st, c, actor(), null), 'Supplied logo restored.'),
     'staff-toggle': el => { const s = S().staff.find(x => x.id === el.dataset.id); run((st, c) => C.setStaffActive(st, c, actor(), s.id, !s.active), 'Staff access updated.'); },
     'staff-pin': el => ask({ title: 'Reset PIN', fields: [{ name: 'pin', label: 'New PIN (4–8 digits)' }], onOk: async f => { if (!/^\d{4,8}$/.test(f.pin)) { A.modal.error = 'Use 4 to 8 digits.'; return renderModal(); } const h = await pinHash(f.pin); run((st, c) => C.resetPin(st, c, actor(), el.dataset.id, h), 'PIN reset.'); } })
   };
@@ -3109,7 +3331,15 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
     rsvp: (form) => { const v = readAttendee(form); A.forms.rsvp = { values: v };
       run((st, c) => C.createBooking(st, c, null, v, { channel: 'public' }), null, { form: 'rsvp', render: false, then: b => { A.flash = b.token; go('m-' + b.token); } }); },
     fb: (form) => { const v = readFeedback(form); A.forms.fb = { values: v }; run((st, c) => C.submitFeedback(st, c, form.dataset.token, v), 'Thank you. Your evaluation has been received.', { form: 'fb' }); },
-    login: async (form) => { const fd = new FormData(form); const h = await pinHash(fd.get('pin') || ''); const sid = fd.get('staff');
+    login: async (form) => { const fd = new FormData(form);
+      if (isRemote()) {
+        const email = String(fd.get('email') || '').trim();
+        try { await AUTH.signIn(email, fd.get('password')); }
+        catch (e) { A.forms.login = { email, message: e.message }; return render(); }
+        delete A.forms.login; A.state = null; render(); await refresh();
+        if (me()) { const t = A.afterLogin || 's-dash'; A.afterLogin = null; go(t); }
+        render(); return;
+      } const h = await pinHash(fd.get('pin') || ''); const sid = fd.get('staff');
       const r = await run((st, c) => C.login(st, c, sid, h), null, { render: false });
       if (r.ok) { setSession(r.result); const t = A.afterLogin || 's-dash'; A.afterLogin = null; go(t); render(); } },
     setup: async (form) => { const fd = new FormData(form); const pin = String(fd.get('pin') || ''); if (!/^\d{4,8}$/.test(pin)) { A.forms.setup = { message: 'Use a PIN of 4 to 8 digits.' }; return render(); }
@@ -3140,7 +3370,8 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
       ch.rsvpClose = g('rsvpClose') + ':00' + e.utcOffset;
       ch.programme = e.programme.map((p, i) => ({ key: p.key, label: g('pl' + i), start: g('ps' + i), end: g('pe' + i) }));
       run((st, c) => C.updateEvent(st, c, actor(), ch), 'Event settings saved.'); },
-    staff: async (form) => { const fd = new FormData(form); const pin = String(fd.get('pin') || ''); if (!/^\d{4,8}$/.test(pin)) return toast('Use a PIN of 4 to 8 digits.', 'bad');
+    staff: async (form) => { const fd = new FormData(form);
+      if (isRemote()) return run((st, c) => C.addStaff(st, c, actor(), { name: fd.get('name'), role: fd.get('role'), email: fd.get('email') || '' }), 'Staff member added. Remember to create their login in Supabase.'); const pin = String(fd.get('pin') || ''); if (!/^\d{4,8}$/.test(pin)) return toast('Use a PIN of 4 to 8 digits.', 'bad');
       const h = await pinHash(pin); run((st, c) => C.addStaff(st, c, actor(), { name: fd.get('name'), role: fd.get('role'), pinHash: h }), 'Staff member added.'); }
   };
 
@@ -3149,7 +3380,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
     'qr-photo': el => { if (el.files && el.files[0]) readQrPhoto(el.files[0]); el.value = ''; },
     'pfb-toggle': el => { A.forms.pfb = Object.assign(A.forms.pfb || {}, { withAnswers: el.checked }); renderModal(); },
     'sig-img': el => readImage(el, 300000, dataUrl => run((st, c) => C.updateSignatory(st, c, actor(), { name: E().signatory.name, title: E().signatory.title, image: dataUrl }), 'Signature image saved.')),
-    'logo': el => readImage(el, 600000, dataUrl => run((st, c) => { C.need(st, actor(), 'settings.edit'); st.event.logo = dataUrl; }, 'Logo replaced.')),
+    'logo': el => readImage(el, 600000, dataUrl => run((st, c) => C.setLogo(st, c, actor(), dataUrl), 'Logo replaced.')),
     'restore': el => { const f = el.files && el.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { try { const data = JSON.parse(r.result); if (!data || !Array.isArray(data.bookings) || !data.event) throw new Error('Not a backup file'); if (data.mode !== A.mode) throw new Error(`This is a ${data.mode} backup; switch to that data set first.`);
       ask({ title: 'Restore backup?', body: `This replaces all ${A.mode} data in this browser with the backup (${data.bookings.length} bookings).`, danger: true, ok: 'Replace with backup', onOk: () => { if (!can('data.restore')) return toast('Administrator only.', 'bad'); data.sessions = {}; data.rev = (S().rev || 0) + 1; A.store.write(data); A.state = data; setSession(null); closeModal(); toast('Backup restored. Please sign in again.', 'ok'); go('staff'); } });
     } catch (e) { toast('Restore failed: ' + e.message, 'bad'); } }; r.readAsText(f); el.value = ''; }
@@ -3186,6 +3417,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
   // keep in step with other tabs and with offer expiry
   function editing() { const a = document.activeElement; return !!(A.modal || (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.type !== 'search')); }
   async function expirySweep() {
+    if (isRemote()) return false;
     const n = now();
     if (S().bookings.some(b => b.status === 'offered' && n >= b.offer.expiresAt)) {
       try { const r = await A.store.transact(st => C.processExpiries(st, ctx())); A.state = r.state; return true; } catch (e) { return false; }
@@ -3193,10 +3425,22 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
     return false;
   }
   window.addEventListener('storage', e => {
-    if (e.key === A.store.key) { A.state = A.store.read() || A.state; if (A.session && !me()) setSession(null); if (!editing()) render(); }
+    if (A.store && A.store.key && e.key === A.store.key) { A.state = A.store.read() || A.state; if (A.session && !me()) setSession(null); if (!editing()) render(); }
     if (e.key === clockKey()) { loadClock(); if (!editing()) render(); }
   });
+  let lastRemote = Date.now();
   setInterval(async () => {
+    if (isRemote()) {
+      // staff screens refresh every 20 seconds, public pages every minute
+      const staffView = A.state && A.state.viewKind === 'staff';
+      if (!A.state || editing() || document.visibilityState === 'hidden' || A.loading) return;
+      if (!staffView && Date.now() - lastRemote < 58000) return;
+      lastRemote = Date.now();
+      await refresh();
+      if (editing()) return;
+      const y = window.scrollY; render(); window.scrollTo(0, y);
+      return;
+    }
     const changed = await expirySweep();
     const h = location.hash.slice(1);
     if (editing()) return;
@@ -3207,10 +3451,10 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
 
   // ---------- start ----------
   openStore();
-  expirySweep().then(() => render());
+  if (!isRemote()) expirySweep().then(() => render());
   render();
   downloadsCap();
-  window.__wapcpd = { A, run, ctx, now };
+  window.__wapcpd = { A, run, ctx, now, refresh };
 })();
 
 </script>

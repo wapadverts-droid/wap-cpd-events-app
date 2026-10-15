@@ -1065,11 +1065,25 @@
     const name = clean(data.name);
     if (name.length < 2) fail('invalid', 'Enter the staff member’s name.');
     if (!ROLES[data.role]) fail('invalid', 'Choose a role.');
-    if (!/^[0-9a-f]{64}$/.test(data.pinHash || '')) fail('invalid', 'Set a PIN of at least 4 digits.');
-    const rec = { id: 's' + (state.staff.length + 1) + randStr(ctx, 4, ALPHA), name, role: data.role, pinHash: data.pinHash, active: true, createdAt: ctx.now };
+    const email = clean(data.email).toLowerCase();
+    if (data.email != null) {
+      // shared-database version: staff sign in with email and password
+      if (!emailOk(email)) fail('invalid', 'Enter the staff member’s email address.');
+      if (state.staff.some(x => (x.email || '') === email)) fail('invalid', 'A staff member with this email already exists.');
+    } else if (!/^[0-9a-f]{64}$/.test(data.pinHash || '')) fail('invalid', 'Set a PIN of at least 4 digits.');
+    const rec = { id: 's' + (state.staff.length + 1) + randStr(ctx, 4, ALPHA), name, role: data.role, active: true, createdAt: ctx.now };
+    if (data.email != null) rec.email = email; else rec.pinHash = data.pinHash;
     state.staff.push(rec);
-    audit(state, ctx, s ? whoStaff(s) : { kind: 'system', name: 'First-time setup' }, 'Staff account added', '', `${name} · ${ROLES[data.role]}`);
+    audit(state, ctx, s ? whoStaff(s) : { kind: 'system', name: 'First-time setup' }, 'Staff account added', '', `${name} · ${ROLES[data.role]}${rec.email ? ' · ' + rec.email : ''}`);
     return rec;
+  }
+  function setLogo(state, ctx, actor, dataUrl) {
+    const s = need(state, actor, 'settings.edit');
+    if (dataUrl == null) { delete state.event.logo; audit(state, ctx, whoStaff(s), 'Logo reset to supplied logo', '', ''); return null; }
+    if (typeof dataUrl !== 'string' || !/^data:image\/(png|jpeg);base64,/.test(dataUrl) || dataUrl.length > 900000) fail('invalid', 'Use a PNG or JPEG image under 600 KB.');
+    state.event.logo = dataUrl;
+    audit(state, ctx, whoStaff(s), 'Logo replaced', '', '');
+    return null;
   }
   function setStaffActive(state, ctx, actor, staffId, active) {
     const s = need(state, actor, 'staff.manage');
@@ -1126,7 +1140,7 @@
     validateFeedback, submitFeedback, recordPaperFeedback, addPaperResponse, feedbackSummary,
     approvalComplete, blockers, certStatus, currentCert, releaseCertificate, releaseAllReady, correctCertificate, certByToken,
     messageText, prepareMessage, setMessageStatus,
-    updateEvent, updateApproval, updateSignatory, addStaff, setStaffActive, resetPin,
+    updateEvent, updateApproval, updateSignatory, addStaff, setStaffActive, resetPin, setLogo,
     stats, bookingByToken, findBooking, fullName, prng, HOUR, MIN, DAY
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

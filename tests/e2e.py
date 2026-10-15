@@ -38,6 +38,8 @@ def route(r):
 def new_page(browser, w, h):
     ctx = browser.new_context(viewport={'width': w, 'height': h}, accept_downloads=True)
     ctx.route('**/*', route)
+    # these checks cover practice mode (data on the device); tests/e2e_remote.py covers the shared database
+    ctx.add_init_script("try { if (!localStorage.getItem('wapcpd:pref:mode')) localStorage.setItem('wapcpd:pref:mode', JSON.stringify('demo')); } catch (e) {}")
     pg = ctx.new_page()
     pg.on('console', lambda m: errors.append(m.text) if m.type == 'error' else None)
     pg.on('pageerror', lambda e: errors.append(str(e)))
@@ -69,7 +71,7 @@ with sync_playwright() as p:
     ok('first visit: fresh start, RSVPs open with 50 of 50 places', re.search(r'50\s+of 50 places left', pg.inner_text('.status-card')), pg.inner_text('.status-card'))
     ok('first visit: real clock, no bookings', pg.evaluate("window.__wapcpd.A.clock === null && window.__wapcpd.A.state.bookings.length === 0"))
     ok('RSVP box sits above event details', pg.evaluate("(()=>{const a=document.querySelector('.status-card').getBoundingClientRect().top, b=document.querySelector('.facts').getBoundingClientRect().top; return a < b})()"))
-    ok('test-version warning shown', 'do not reach the organisers' in pg.inner_text('.modebar'))
+    ok('practice-mode warning shown', 'do not reach the organisers' in pg.inner_text('.modebar'))
     ok('logo shown', pg.locator('.brand img').get_attribute('src').startswith('data:image/jpeg'))
     ok('page has its own doctype (standards mode)', pg.evaluate('document.compatMode') == 'CSS1Compat')
     pg.screenshot(path=str(SHOTS / 'd-home-closed.png'))
@@ -230,10 +232,9 @@ with sync_playwright() as p:
     ok('bookings persist after reload', pg.evaluate('window.__wapcpd.A.state.bookings.length') > 50)
 
     # live mode is separate and empty
-    pg.click('[data-act=demo-panel]'); pg.click('[data-act=mode][data-mode=live]'); pg.wait_for_timeout(300)
-    ok('real-data mode starts empty with admin setup', 'Set up the administrator' in pg.inner_text('main'))
-    ok('real-data warning shown', 'not shared with other staff devices' in pg.inner_text('.modebar'))
-    pg.click('[data-act=demo-panel]'); pg.click('[data-act=mode][data-mode=demo]'); pg.wait_for_timeout(300)
+    pg.click('[data-act=demo-panel]')
+    ok('practice panel offers the way back to the shared test database', pg.locator('[data-act=mode][data-mode=shared]').count() == 1)
+    pg.click('.modal [data-act=close-modal]')
     ok('demo data still there after switching back', pg.evaluate('window.__wapcpd.A.state.bookings.length') > 50)
     ctx.close()
 

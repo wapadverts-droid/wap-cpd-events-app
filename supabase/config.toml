@@ -1,0 +1,7 @@
+# Supabase settings for deploying the server program (Edge Function "cpd").
+project_id = "wap-cpd-events-app"
+
+[functions.cpd]
+# The function checks staff sign-ins itself (see server/handler.js), so the
+# public website key is enough to call it.
+verify_jwt = false
