@@ -66,7 +66,10 @@ with sync_playwright() as p:
     browser = p.chromium.launch()
     ctx, pg = new_page(browser, 1280, 900)
     pg.goto('http://app.test/'); pg.wait_for_selector('.hero')
-    ok('loads with event-night demo; RSVPs closed at 19:40', 'Online RSVPs are closed' in pg.inner_text('.status-card'))
+    ok('first visit: fresh start, RSVPs open with 50 of 50 places', re.search(r'50\s+of 50 places left', pg.inner_text('.status-card')), pg.inner_text('.status-card'))
+    ok('first visit: real clock, no bookings', pg.evaluate("window.__wapcpd.A.clock === null && window.__wapcpd.A.state.bookings.length === 0"))
+    ok('RSVP box sits above event details', pg.evaluate("(()=>{const a=document.querySelector('.status-card').getBoundingClientRect().top, b=document.querySelector('.facts').getBoundingClientRect().top; return a < b})()"))
+    ok('test-version warning shown', 'do not reach the organisers' in pg.inner_text('.modebar'))
     ok('logo shown', pg.locator('.brand img').get_attribute('src').startswith('data:image/jpeg'))
     ok('page has its own doctype (standards mode)', pg.evaluate('document.compatMode') == 'CSS1Compat')
     pg.screenshot(path=str(SHOTS / 'd-home-closed.png'))
@@ -209,17 +212,29 @@ with sync_playwright() as p:
             pg.click(sel)
         path = SHOTS / name; dl.value.save_as(str(path)); ok(f'{act} PDF', path.stat().st_size > 3000)
 
+    # Fresh start button resets old demo data (still before persistence checks use certificates)
+    count = pg.evaluate('window.__wapcpd.A.state.certificates.length')
+    pg.goto('http://app.test/#home'); pg.wait_for_selector('.status-card')
+    ok('event-night demo shows RSVPs closed', 'Online RSVPs are closed' in pg.inner_text('.status-card'))
+    pg.reload(); pg.wait_for_selector('#app main')
+    ok('data persists after reload', pg.evaluate('window.__wapcpd.A.state.certificates.length') == count and count > 0)
+    demo(pg, 'fresh'); pg.wait_for_selector('.status-card')
+    ok('Fresh start button: RSVPs open again, 50 places', re.search(r'50\s+of 50 places left', pg.inner_text('.status-card')), pg.inner_text('.status-card'))
+    ok('Fresh start: demo staff can still sign in', (login(pg, 'Demo Administrator — Administrator', '1111') or True) and pg.locator('.sidenav').count() == 1)
+    demo(pg, 'event')
+    count = pg.evaluate('window.__wapcpd.A.state.certificates.length')
+
     # persistence after reload
     count = pg.evaluate('window.__wapcpd.A.state.certificates.length')
     pg.reload(); pg.wait_for_selector('#app main')
-    ok('data persists after reload', pg.evaluate('window.__wapcpd.A.state.certificates.length') == count and count > 0)
+    ok('bookings persist after reload', pg.evaluate('window.__wapcpd.A.state.bookings.length') > 50)
 
     # live mode is separate and empty
     pg.click('[data-act=demo-panel]'); pg.click('[data-act=mode][data-mode=live]'); pg.wait_for_timeout(300)
     ok('real-data mode starts empty with admin setup', 'Set up the administrator' in pg.inner_text('main'))
     ok('real-data warning shown', 'not shared with other staff devices' in pg.inner_text('.modebar'))
     pg.click('[data-act=demo-panel]'); pg.click('[data-act=mode][data-mode=demo]'); pg.wait_for_timeout(300)
-    ok('demo data still there after switching back', pg.evaluate('window.__wapcpd.A.state.certificates.length') == count)
+    ok('demo data still there after switching back', pg.evaluate('window.__wapcpd.A.state.bookings.length') > 50)
     ctx.close()
 
     # phone

@@ -4,6 +4,9 @@
 - **v1 (5 Oct 2026)** — Prototype built and tested in claude.ai.
 - **15 Oct 2026** — Moved to GitHub (`wapadverts-droid/wap-cpd-events-app`) for public hosting with GitHub Pages. App code is unchanged from v1. The page template now includes its own document header (doctype, character set, viewport) so it renders correctly outside claude.ai. File downloads use the browser's normal download when not inside claude.ai.
 
+- **15 Oct 2026 (b)** — Landing page: "About this session" paragraph replaces the learning-objectives list (editable in Settings).
+- **15 Oct 2026 (c)** — First-time visitors get a "fresh start": real date and time, no bookings, RSVPs open until 23 Oct 12:00; demo staff PINs still work. Demo controls has a "Fresh start" button for browsers holding older demo data. The RSVP box now sits above the event details on all screen sizes. Banner warns that bookings stay on the device.
+
 ## Decisions taken
 - Pending offers hold places. Offers go in queue order; the administrator may skip the queue with a recorded reason. Offers last 24 h, 2 h on the event day, and are capped at event start (18:00). Windows under 30 minutes are refused and handled at the desk as late cases.
 - New applicants join the waiting list whenever anyone is already waiting, even if a place is free (first come, first served).
@@ -26,4 +29,4 @@
 
 ## Tests (15 Oct 2026, on the GitHub build)
 - 21 Node rules tests pass, including 70 simultaneous registrations for 50 places with no overbooking.
-- 58 Playwright browser checks pass on desktop and phone sizes: RSVP, waiting list and offers, PA permission refusals, duplicates, check-in, completion, QR photo check-out, early-departure review, certificate blocking and release, PDF and CSV downloads, persistence after reload, separate real-data mode, no horizontal scrolling on phone.
+- 65 Playwright browser checks pass (updated 15 Oct (c)) on desktop and phone sizes: RSVP, waiting list and offers, PA permission refusals, duplicates, check-in, completion, QR photo check-out, early-departure review, certificate blocking and release, PDF and CSV downloads, persistence after reload, separate real-data mode, no horizontal scrolling on phone.

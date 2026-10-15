@@ -38,7 +38,7 @@
     A.state = A.store.read();
     loadClock();
     if (!A.state) {
-      if (A.mode === 'demo') loadScenario('event');
+      if (A.mode === 'demo') loadScenario('fresh');
       else { A.state = C.createState('live'); A.state.createdAt = Date.now(); A.store.write(A.state); }
     }
     try { A.session = SESS.getItem('wapcpd:session:' + A.mode) || null; } catch (e) { A.session = null; }
@@ -176,7 +176,7 @@
   function modebar() {
     if (A.mode === 'demo') {
       const sim = A.clock && A.clock.at;
-      return `<div class="modebar demo" role="note"><span><b>Demo · fictional attendees.</b><span class="mb-long"> Data is saved in this browser only.</span></span>
+      return `<div class="modebar demo" role="note"><span>${S().scenario === 'fresh' ? '<b>Test version.</b> Bookings are saved on this device only and do not reach the organisers yet.' : '<b>Demo · fictional attendees.</b><span class="mb-long"> Data is saved in this browser only.</span>'}</span>
         <span>${sim ? 'Simulated time' : 'Real time'}: <b class="tnum">${F(now())}</b></span>
         <button class="btn btn-s" data-act="demo-panel">Demo controls</button></div>`;
     }
@@ -237,12 +237,16 @@
     else if (ps.status === 'waitlist') status = `<div class="eyebrow">Advance booking</div><h2>All advance places are taken</h2><p>Join the waiting list. If a place becomes free, we will send you an offer with a time limit to accept.</p><a class="btn btn-primary btn-xl" href="#rsvp">Join the waiting list</a>`;
     else status = `<div class="eyebrow">Advance booking</div><h2>Online RSVPs are closed</h2><p>Online RSVPs closed on ${F(t.rsvpClose)}. If you still want to attend, please contact the organiser; staff can register you if a place remains.</p>`;
     const prog = e.programme.map(p => `<tr><td>${esc(p.start)}–${esc(p.end)}</td><td>${esc(p.label)}</td></tr>`).join('');
-    return { title: e.topic, html: `<div class="stack">
+    return { title: e.topic, html: `<div class="stack home">
       <section class="hero">
         <div>
           <div class="eyebrow">CPD activity · ${esc(e.provider)}</div>
           <h1>${esc(e.topic)}</h1>
           <p class="sub">${esc(e.subtitle)}</p>
+        </div>
+        <div class="status-card">${status}<p class="small">${esc(e.publicWording)}</p>${ps.open ? `<p class="small muted">Online RSVPs close ${F(t.rsvpClose)} (Namibia time).</p>` : ''}</div>
+        <div class="panel">
+          <h2>Event details</h2>
           <dl class="facts">
             <dt>Date</dt><dd>${esc(C.fmtDate(t.eventStart, tz()))}, ${esc(e.programme[0].start)}–${esc(e.programme[e.programme.length - 1].end)}</dd>
             <dt>Venue</dt><dd>${esc(e.venue)}, ${esc(e.venueAddress)}</dd>
@@ -252,7 +256,6 @@
             <dt>Provider</dt><dd>${esc(e.provider)} · accredited provider ${esc(e.providerNumber)}</dd>
           </dl>
         </div>
-        <div class="status-card">${status}<p class="small">${esc(e.publicWording)}</p>${ps.open ? `<p class="small muted">Online RSVPs close ${F(t.rsvpClose)} (Namibia time).</p>` : ''}</div>
       </section>
       <div class="grid2">
         <section class="panel"><h2>Programme</h2><table class="prog">${prog}</table></section>
@@ -1073,6 +1076,7 @@
       [`${d}T19:00`, 'Event day 19:00 (before end of Q&A)'], [`${d}T19:31`, 'Event day 19:31 (completion & evaluation)'], ['2026-10-24T10:00', 'Next day 10:00 (paper entry)']];
     A.modal = { html: () => `<div class="modal-head"><div><div class="eyebrow">Prototype</div><h2>${A.mode === 'demo' ? 'Demo controls' : 'Data set'}</h2></div><button class="btn btn-s" data-act="close-modal">Close</button></div>
       ${A.mode === 'demo' ? `<section class="stack-s"><h3>Load a scenario (replaces current demo data)</h3><div class="row">
+        <button class="btn btn-primary" data-act="scenario" data-sc="fresh">Fresh start · real time, no bookings</button>
         <button class="btn" data-act="scenario" data-sc="booking">Booking phase · 12 Oct (2 places left)</button>
         <button class="btn" data-act="scenario" data-sc="event">Event night · 23 Oct 19:40 (full workflow)</button></div>
         <p class="small muted">Event night includes waiting-list offers that expired and were declined, contingency places with reasons, a paper-form and walk-in registration, two walk-ins on the waiting list, no-shows, early departures, a duplicate, a missing HPCNA number, paper and online evaluations, and certificates blocked for different reasons.</p></section>
@@ -1094,7 +1098,7 @@
     'close-modal': closeModal,
     'overlay': (el, ev) => { if (ev.target === el) closeModal(); },
     'copy': el => copy(el.dataset.text),
-    'scenario': el => { loadScenario(el.dataset.sc); closeModal(); toast('Scenario loaded', 'ok'); go(el.dataset.sc === 'booking' ? 'home' : 'staff'); },
+    'scenario': el => { loadScenario(el.dataset.sc); closeModal(); toast('Scenario loaded', 'ok'); go(el.dataset.sc === 'event' ? 'staff' : 'home'); },
     'clock': el => { const v = el.dataset.at; if (v === 'real') setClock(null); else setClock(Date.parse(v + ':00' + E().utcOffset)); closeModal(); expirySweep(); render(); toast('Time set: ' + F(now()), 'ok'); },
     'mode': el => { const m = el.dataset.mode; if (m === A.mode) return closeModal(); A.mode = m; pset('mode', m); openStore(); closeModal(); go(m === 'live' ? 'staff' : 'home'); },
     'chip': el => { A.ui[el.dataset.group] = el.dataset.val; render(); },

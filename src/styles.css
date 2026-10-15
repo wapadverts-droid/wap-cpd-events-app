@@ -133,8 +133,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--focus); outline:
 .form-errors { background: var(--bad-bg); color: var(--bad); padding: 12px 14px; border-radius: 9px; font-weight: 700; }
 
 /* public hero */
-.hero { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 22px; align-items: start; }
-@media (max-width: 860px) { .hero { grid-template-columns: minmax(0, 1fr); } }
+.hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-items: start; }
+.home { max-width: 860px; margin: 0 auto; }
+.hero .facts { margin-top: 0; }
 .hero h1 { color: var(--ink); }
 .hero .sub { font-size: 1.15rem; color: var(--muted); margin-top: 6px; }
 .facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 16px; margin-top: 18px; }

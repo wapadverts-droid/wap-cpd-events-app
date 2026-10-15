@@ -70,6 +70,13 @@
     const book = (when, extra, opts) => { ctx.now = when; return CPD.createBooking(state, ctx, opts && opts.channel === 'staff' ? (opts.actor || paS) : null, Object.assign({}, people[p++], extra || {}), opts); };
     const tok = b => b.token;
 
+    if (scenario === 'fresh') {
+      // Fresh start: real date and time, no bookings. Demo staff PINs still work.
+      state.clock = { simulated: false, at: null, setAt: null };
+      state.scenario = 'fresh';
+      state.sessions = {};
+      return state;
+    }
     if (scenario === 'booking') {
       // Booking phase: 12 October. 48 public places held, 2 left.
       for (let i = 0; i < 49; i++) {
