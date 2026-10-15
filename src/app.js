@@ -378,7 +378,7 @@
     const comp = b.completion;
     return `<div class="track">
       ${step(b.status === 'confirmed', 'Booked', b.status === 'confirmed' ? 'Place confirmed' : C.STATUS_LABEL[b.status], b.status === 'confirmed' ? 'done' : 'wait')}
-      ${step(!!b.arrival, 'Arrived', b.arrival ? FT(b.arrival.at) : 'Show your QR code at the desk')}
+      ${step(!!b.arrival, 'Arrived', b.arrival ? FT(b.arrival.at) : 'Give your name at the desk')}
       ${step(C.completed(b), 'Completed', comp ? ({ confirmed: 'Confirmed ' + FT(comp.at), 'early-pending': 'Under review', 'early-approved': 'Approved', 'early-rejected': 'Not accepted' }[comp.status]) : 'Confirmed at end of Q&A', comp && comp.status === 'early-pending' ? 'wait' : (comp && comp.status === 'early-rejected' ? 'bad' : ''))}
       ${step(!!b.feedback, 'Evaluation', b.feedback ? 'Received' : 'Required for certificate', b.feedback ? 'done' : (C.completed(b) ? 'bad' : ''))}
       ${step(cs.key === 'released', 'Certificate', cs.key === 'released' ? 'Ready to download' : 'After checks and release')}
@@ -390,7 +390,7 @@
     const e = E(), t = T(), n = now(), cert = C.currentCert(S(), b), locked = !!cert;
     const isNew = A.flash === b.token; A.flash = null;
     let banner = '';
-    if (b.status === 'confirmed') banner = `<div class="alert ok"><div><b>${isNew ? 'Your place is booked.' : 'Your place is confirmed.'}</b> ${b.pool === 'contingency' ? 'Allocated by the organiser.' : ''} Show the QR code below at registration from ${esc(e.programme[0].start)}.</div></div>`;
+    if (b.status === 'confirmed') banner = `<div class="alert ok"><div><b>Your place is confirmed.</b> Give your name at the registration desk from ${esc(e.programme[0].start)}.${b.pool === 'contingency' ? ' (Place allocated by the organiser.)' : ''}</div></div>`;
     else if (b.status === 'waitlisted') { const pos = S().waitlistPos || (C.waitlist(S()).findIndex(x => x.id === b.id) + 1); banner = `<div class="alert warn"><div><b>${isNew ? 'You are on the waiting list.' : 'Waiting list'} — position ${pos}.</b> If a place becomes free, you will receive an offer with a time limit to accept.</div></div>`; }
     else if (b.status === 'offered') banner = `<div class="alert info"><div><b>A place is available for you.</b> Accept by <b>${F(b.offer.expiresAt)}</b> (Namibia time), or the place goes to the next person.</div>
         <div class="row"><button class="btn btn-ok" data-act="pub-accept" data-token="${esc(token)}">Accept the place</button><button class="btn" data-act="pub-decline" data-token="${esc(token)}">Decline</button></div></div>`;
@@ -400,8 +400,8 @@
     return { title: 'My booking', html: `<div class="narrow stack">
       <div><div class="eyebrow">My booking</div><h1>${nameOf(b)}</h1><p class="muted">${esc(e.topic)} · ${esc(C.fmtDate(t.eventStart, tz()))}</p></div>
       ${banner}
-      ${b.status === 'confirmed' ? `<section class="panel ticket">${qrImg(C.qrPayload(b))}<div class="stack-s"><span class="eyebrow">Booking reference</span><span class="ref">${esc(b.ref)}</span>
-        <p class="small">Show this QR code (or your reference) at the desk on arrival, and again at the end of Q&A if staff use QR check-out.</p></div></section>` : `<section class="panel"><span class="eyebrow">Reference</span> <span class="ref">${esc(b.ref)}</span></section>`}
+      ${b.status === 'confirmed' ? `<section class="panel ticket ticket-small"><div class="stack-s"><span class="eyebrow">Booking reference</span><span class="ref">${esc(b.ref)}</span>
+        <p class="small muted">Optional: show this QR code at the desk to speed up check-in. Your name is enough.</p></div>${qrImg(C.qrPayload(b), 'qr qr-small')}</section>` : `<section class="panel"><span class="eyebrow">Reference</span> <span class="ref">${esc(b.ref)}</span></section>`}
       ${b.status === 'confirmed' ? `<section class="panel stack-s"><h2>Your progress</h2>${tracker(b)}
         ${!b.feedback && b.status === 'confirmed' ? (fbOpen ? `<a class="btn btn-primary btn-xl" href="#f-${esc(token)}">Complete the evaluation</a>` : `<p class="small muted">The evaluation opens at ${F(t.feedbackOpen)}. NO FEEDBACK, NO CERTIFICATE.</p>`) : ''}
         ${cert ? `<a class="btn btn-ok btn-xl" href="#c-${esc(cert.token)}">View and download my certificate</a>` : ''}</section>` : ''}
@@ -813,7 +813,7 @@
       if (b.status !== 'confirmed') act = `<span class="small">${pBooking(b)} <a href="#s-p-${b.id}">Open record</a></span>`;
       else if (mode === 'arrival') act = b.arrival ? `<span class="pill p-ok">Arrived ${FT(b.arrival.at)}</span>` : `<button class="btn btn-primary btn-xl" data-act="arrive" data-id="${b.id}" data-method="search">Check in</button>`;
       else act = !b.arrival ? `<span class="pill p-warn">No arrival recorded</span> <button class="btn btn-s" data-act="arrive" data-id="${b.id}" data-method="search">Record arrival</button>`
-        : b.completion ? pComp(b) : `<div class="row"><button class="btn btn-ok" data-act="complete" data-id="${b.id}" data-method="qr-checkout">QR check-out</button><button class="btn btn-ok" data-act="complete" data-id="${b.id}" data-method="register">Signed register</button><button class="btn btn-s" data-act="early" data-id="${b.id}">Early departure</button></div>`;
+        : b.completion ? pComp(b) : `<div class="row"><button class="btn btn-ok" data-act="complete" data-id="${b.id}" data-method="register">Signed register</button><button class="btn btn-s" data-act="complete" data-id="${b.id}" data-method="qr-checkout">QR check-out</button><button class="btn btn-s" data-act="early" data-id="${b.id}">Early departure</button></div>`;
       return `<div class="alert" style="border-left-color:${b.arrival ? 'var(--ok)' : 'var(--line)'}"><div><b style="font-size:1.1rem">${nameOf(b)}</b> <span class="mono small">${esc(b.ref)}</span><div class="small muted">${profOf(b)} ${flagPills(b)}</div></div>${act}</div>`;
     }).join('');
     return (r || `<div class="empty">${q ? 'No booking matches. Check the spelling, or register the person on the Register page.' : (mode === 'arrival' ? 'Everyone booked has arrived.' : 'Nobody is waiting for completion confirmation.')}</div>`) + (list.length > 40 ? `<p class="small muted">Showing 40 of ${list.length}. Type to narrow the list.</p>` : '');
@@ -828,9 +828,9 @@
       ${res ? `<div class="alert ${res.ok ? 'ok' : 'bad'}" role="status"><div>${res.html}</div></div>` : ''}
       <section class="panel stack-s">
         <div class="row" style="align-items:stretch"><input type="search" id="ci-q" placeholder="Name, reference, phone or HPCNA number" value="${esc(A.ui.ciQ)}" data-input="ci-q" style="flex:1 1 260px;font-size:1.15rem;min-height:56px" aria-label="Find attendee">
-          <label class="btn btn-primary btn-xl" for="qrfile" style="cursor:pointer">Scan QR (photo)</label><input type="file" id="qrfile" accept="image/*" capture="environment" data-change="qr-photo" hidden></div>
-        <p class="small muted">Scan QR takes a photo of the attendee's QR code with your device camera and reads it. Live camera scanning is not available inside this prototype's page.</p>
-        ${mode === 'completion' ? `<div><button class="btn" data-act="register-bulk">Enter signed register (tick several)</button></div>` : ''}
+          <label class="btn btn-s" for="qrfile" style="cursor:pointer;align-self:center">Scan QR (optional)</label><input type="file" id="qrfile" accept="image/*" capture="environment" data-change="qr-photo" hidden></div>
+        <p class="small muted">${mode === 'completion' ? 'Completion is confirmed by the signed attendance register: tick everyone who signed, or confirm one person at a time below.' : 'Type the first letters of the surname (or the phone number), then tap Check in.'} Attendees may also show their QR code; “Scan QR” takes a photo of it.</p>
+        ${mode === 'completion' ? `<div><button class="btn btn-primary" data-act="register-bulk">Enter signed register (tick several)</button></div>` : ''}
       </section>
       <div id="ci-results" class="stack-s">${ciResults()}</div>`, after: () => { const el = document.getElementById('ci-q'); if (el && A.ui.ciFocus !== false) el.focus({ preventScroll: true }); } };
   }

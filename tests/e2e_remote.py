@@ -70,7 +70,7 @@ try:
         a.click('form[data-form=rsvp] button[type=submit]'); a.wait_for_selector('.form-errors')
         ok('empty RSVP shows field errors instantly', a.locator('.invalid').count() >= 4)
         fill_rsvp(a, 1); a.wait_for_selector('.ref', timeout=15000)
-        ok('RSVP saved to shared database, booking page with ref and QR', 'Your place is booked' in a.inner_text('main') and a.locator('img.qr').count() == 1)
+        ok('RSVP saved to shared database, booking page with ref and QR', 'Your place is confirmed' in a.inner_text('main') and a.locator('img.qr').count() == 1)
         manage = a.url; ref = a.inner_text('.ref')
         a.screenshot(path=str(SHOTS / 'r-booked.png'), full_page=True)
 

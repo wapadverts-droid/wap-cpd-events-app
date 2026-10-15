@@ -84,10 +84,10 @@ with sync_playwright() as p:
     pg.wait_for_selector('.form-errors')
     ok('empty RSVP shows field errors', pg.locator('.invalid').count() >= 4, pg.locator('.invalid').count())
     fill_rsvp(pg, 1); pg.wait_for_selector('.ref')
-    ok('RSVP 1 confirmed with ref and QR', 'Your place is booked' in pg.inner_text('main') and pg.locator('img.qr').count() == 1)
+    ok('RSVP 1 confirmed with ref and QR', 'Your place is confirmed' in pg.inner_text('main') and pg.locator('img.qr').count() == 1)
     manage1 = pg.url
     pg.goto('http://app.test/#rsvp'); pg.wait_for_selector('#a-firstName'); fill_rsvp(pg, 2); pg.wait_for_selector('.ref')
-    ok('RSVP 2 takes last place', 'Your place is booked' in pg.inner_text('main'))
+    ok('RSVP 2 takes last place', 'Your place is confirmed' in pg.inner_text('main'))
     pg.goto('http://app.test/#rsvp'); pg.wait_for_selector('#a-firstName')
     ok('form now says waiting list', 'Join the waiting list' in pg.inner_text('main'))
     fill_rsvp(pg, 3); pg.wait_for_selector('.ref')
