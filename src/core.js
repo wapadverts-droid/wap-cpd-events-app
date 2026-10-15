@@ -106,6 +106,7 @@
       organiser: 'Tawanda Amedio Taderera',
       phone: '0814285408',
       emails: ['tawanda@wappharm.com', 'marketing@wappharm.com'],
+      about: 'This session gives practical information on rhinosinusitis: how to recognise it, how it is assessed and managed, and when to refer patients to a specialist.',
       objectives: [
         'Distinguish acute and chronic rhinosinusitis and recognise common presentations.',
         'Describe assessment and management options, including appropriate medicine use.',
@@ -1022,7 +1023,7 @@
   // ---------- settings & staff ----------
   const EVENT_FIELDS = ['title', 'topic', 'subtitle', 'date', 'venue', 'venueAddress', 'venueShort', 'presenter', 'presenterTitle', 'presenterSpecialty', 'audience', 'fee',
     'provider', 'providerNumber', 'organiser', 'phone', 'emails', 'publicCap', 'contingencyCap', 'maxCap', 'rsvpClose', 'offerHours',
-    'eventDayOfferHours', 'minOfferMinutes', 'feedbackOpensTime', 'feedbackCloseDays', 'refPrefix', 'publicWording', 'programme', 'objectives'];
+    'eventDayOfferHours', 'minOfferMinutes', 'feedbackOpensTime', 'feedbackCloseDays', 'refPrefix', 'publicWording', 'about', 'programme', 'objectives'];
   function updateEvent(state, ctx, actor, changes) {
     const s = need(state, actor, 'settings.edit');
     const next = Object.assign({}, state.event);

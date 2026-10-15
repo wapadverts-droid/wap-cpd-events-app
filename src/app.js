@@ -256,7 +256,7 @@
       </section>
       <div class="grid2">
         <section class="panel"><h2>Programme</h2><table class="prog">${prog}</table></section>
-        <section class="panel"><h2>What you will learn</h2><ul>${e.objectives.map(o => `<li>${esc(o)}</li>`).join('')}</ul>
+        <section class="panel"><h2>About this session</h2><p>${esc(e.about || C.defaultEvent().about)}</p>
           <p class="small muted" style="margin-top:8px">Certificates are issued after confirmed completion of the session and a completed evaluation: <b>NO FEEDBACK, NO CERTIFICATE.</b> CPD points are subject to HPCNA approval of the activity.</p></section>
       </div>
       <section class="panel"><h2>Questions?</h2><p>Contact ${esc(e.organiser)}: <span class="mono">${esc(e.phone)}</span> · ${e.emails.map(m => `<span class="mono">${esc(m)}</span>`).join(' · ')}</p>
@@ -1050,6 +1050,7 @@
         <div class="two">${inp('maxCap', 'Maximum attendance', e.maxCap, 'number')}${inp('rsvpClose', 'Online RSVPs close (Namibia time)', rc, 'datetime-local')}</div>
         <div class="two">${inp('offerHours', 'Offer time limit (hours)', e.offerHours, 'number')}${inp('eventDayOfferHours', 'Offer time limit on event day (hours)', e.eventDayOfferHours, 'number')}</div>
         <div class="two">${inp('minOfferMinutes', 'Minimum offer window (minutes)', e.minOfferMinutes, 'number', 'Shorter windows become desk-handled late cases.')}${inp('feedbackOpensTime', 'Online evaluation opens', e.feedbackOpensTime, 'time')}</div>
+        <div class="field"><label for="ev-about">About this session (landing page)</label><textarea id="ev-about" name="about">${val('about', e.about || C.defaultEvent().about)}</textarea></div>
         <div class="field"><label for="ev-publicWording">Public booking wording</label><textarea id="ev-publicWording" name="publicWording">${val('publicWording', e.publicWording)}</textarea></div>
         <button class="btn btn-primary btn-xl" type="submit">Save event settings</button>
       </form>
@@ -1218,7 +1219,7 @@
       run((st, c) => { ids.forEach(id => C.confirmCompletion(st, c, actor(), id, 'register', tm == null ? undefined : tm)); return ids.length; }, k => `Completion confirmed for ${k} attendee(s).`); },
     clock: (form) => { const v = new FormData(form).get('at'); if (!v) return; setClock(Date.parse(v + ':00' + E().utcOffset)); closeModal(); expirySweep(); render(); },
     ev: (form) => { const fd = new FormData(form), e = E(), g = k => (fd.get(k) || '').toString().trim();
-      const ch = {}; ['topic', 'title', 'subtitle', 'date', 'refPrefix', 'venue', 'venueAddress', 'venueShort', 'presenter', 'presenterTitle', 'presenterSpecialty', 'audience', 'fee', 'provider', 'providerNumber', 'organiser', 'phone', 'publicWording', 'feedbackOpensTime'].forEach(k => ch[k] = g(k));
+      const ch = {}; ['topic', 'title', 'subtitle', 'date', 'refPrefix', 'venue', 'venueAddress', 'venueShort', 'presenter', 'presenterTitle', 'presenterSpecialty', 'audience', 'fee', 'provider', 'providerNumber', 'organiser', 'phone', 'publicWording', 'about', 'feedbackOpensTime'].forEach(k => ch[k] = g(k));
       ch.emails = g('emails').split(',').map(x => x.trim()).filter(Boolean);
       ['publicCap', 'contingencyCap', 'maxCap', 'offerHours', 'eventDayOfferHours', 'minOfferMinutes'].forEach(k => ch[k] = Number(g(k)));
       ch.rsvpClose = g('rsvpClose') + ':00' + e.utcOffset;
