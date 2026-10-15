@@ -158,6 +158,7 @@
     return { manage: base() + '#m-' + b.token, feedback: base() + '#f-' + b.token, certificate: cert ? base() + '#c-' + cert.token : '' };
   }
   const logo = () => E().logo || window.WAP_LOGO || '';
+  const contactsHtml = sep => C.contactsOf(E()).map(c => [c.phone ? `<span class="mono" style="white-space:nowrap">${esc(c.phone)}</span>` : '', c.email ? `<span class="mono">${esc(c.email)}</span>` : ''].filter(Boolean).join(' · ')).join(sep || ', or ');
   const presenterPhoto = () => { const p = E().presenterPhoto; return p === 'none' ? '' : (p || window.WAP_PRESENTER || ''); };
   const nameOf = b => esc(b.firstName + ' ' + b.lastName);
   const profOf = b => esc(b.profession === 'Other' ? (b.professionOther || 'Other') : b.profession);
@@ -219,7 +220,7 @@
       <button class="btn btn-s" data-act="demo-panel">Switch data set</button></div>`;
   }
   function footer() {
-    return `<footer class="foot">${esc(E().provider)} · CPD provider ${esc(E().providerNumber)} · Organiser ${esc(E().organiser)}, <span class="mono">${esc(E().phone)}</span><br>
+    return `<footer class="foot">${esc(E().provider)} · CPD provider ${esc(E().providerNumber)}<br>Questions: ${contactsHtml()}<br>
       ${isRemote() ? '' : 'Practice mode: data stays on this device. '}Messages are prepared, not sent automatically. Certificates are not valid until HPCNA approval details are entered and the administrator releases them.${PERSISTENT || isRemote() ? '' : '<br><b>Browser storage is blocked: changes will be lost when you close this page.</b>'}</footer>`;
   }
 
@@ -289,7 +290,7 @@
       <div class="meter ${ps.publicFree < 6 ? 'full' : ''}"><i style="width:${(100 * (ps.publicCap - ps.publicFree) / ps.publicCap).toFixed(1)}%"></i></div>
       <a class="btn btn-primary btn-xl" href="#rsvp">RSVP to secure your place</a>`;
     else if (ps.status === 'waitlist') status = `<div class="eyebrow">Advance booking</div><h2>All advance places are taken</h2><p>Join the waiting list. If a place becomes free, we will send you an offer with a time limit to accept.</p><a class="btn btn-primary btn-xl" href="#rsvp">Join the waiting list</a>`;
-    else status = `<div class="eyebrow">Advance booking</div><h2>Online RSVPs are closed</h2><p>Online RSVPs closed on ${F(t.rsvpClose)}. If you still want to attend, please contact the organiser; staff can register you if a place remains.</p>`;
+    else status = `<div class="eyebrow">Advance booking</div><h2>Online RSVPs are closed</h2><p>Online RSVPs closed on ${F(t.rsvpClose)}. If you still want to attend, please contact us: ${contactsHtml()}. Staff can register you if a place remains.</p>`;
     const prog = e.programme.map(p => `<tr><td>${esc(p.start)}–${esc(p.end)}</td><td>${esc(p.label)}</td></tr>`).join('');
     return { title: e.topic, html: `<div class="stack home">
       <section class="hero">
@@ -316,7 +317,7 @@
         <section class="panel"><h2>About this session</h2><p>${esc(e.about || C.defaultEvent().about)}</p>
           <p class="small muted" style="margin-top:8px">Certificates are issued after confirmed completion of the session and a completed evaluation: <b>NO FEEDBACK, NO CERTIFICATE.</b> CPD points are subject to HPCNA approval of the activity.</p></section>
       </div>
-      <section class="panel"><h2>Questions?</h2><p>Contact ${esc(e.organiser)}: <span class="mono">${esc(e.phone)}</span> · ${e.emails.map(m => `<span class="mono">${esc(m)}</span>`).join(' · ')}</p>
+      <section class="panel"><h2>Questions?</h2><p>${contactsHtml()}</p>
         <p class="small muted" style="margin-top:6px">Already booked? Open the private link in your confirmation message to view, change or cancel your booking.</p></section>
     </div>` };
   }
@@ -360,7 +361,7 @@
 
   function vRsvp() {
     const ps = pubSummary(), t = T();
-    if (!ps.open) return { title: 'RSVP', html: `<div class="narrow panel stack"><h1>Online RSVPs are closed</h1><p>Online RSVPs closed on ${F(t.rsvpClose)}. Please contact ${esc(E().organiser)} on <span class="mono">${esc(E().phone)}</span>. Staff can still register you if a place remains.</p><a class="btn" href="#home">Back to event details</a></div>` };
+    if (!ps.open) return { title: 'RSVP', html: `<div class="narrow panel stack"><h1>Online RSVPs are closed</h1><p>Online RSVPs closed on ${F(t.rsvpClose)}. Please contact us: ${contactsHtml()}. Staff can still register you if a place remains.</p><a class="btn" href="#home">Back to event details</a></div>` };
     const fs = A.forms.rsvp || {};
     return { title: 'RSVP', html: `<div class="narrow stack">
       <div><a href="#home" class="small">← Event details</a><h1 style="margin-top:6px">${ps.status === 'open' ? 'RSVP' : 'Join the waiting list'}</h1>
@@ -387,7 +388,7 @@
   }
   function vManage(token) {
     const b = C.bookingByToken(S(), token);
-    if (!b) return { title: 'Booking', html: `<div class="narrow panel stack"><h1>Booking not found</h1><p>${isRemote() ? 'This booking link is not valid. Please check that you opened the full link from your confirmation message, or contact the organiser.' : 'This link is not valid on this device. In practice mode, booking links only work on the device where the booking was made.'}</p><a class="btn" href="#home">Event details</a></div>` };
+    if (!b) return { title: 'Booking', html: `<div class="narrow panel stack"><h1>Booking not found</h1><p>${isRemote() ? 'This booking link is not valid. Please check that you opened the full link from your confirmation message, or contact us: ' + contactsHtml() + '.' : 'This link is not valid on this device. In practice mode, booking links only work on the device where the booking was made.'}</p><a class="btn" href="#home">Event details</a></div>` };
     const e = E(), t = T(), n = now(), cert = C.currentCert(S(), b), locked = !!cert;
     const isNew = A.flash === b.token; A.flash = null;
     let banner = '';
@@ -395,7 +396,7 @@
     else if (b.status === 'waitlisted') { const pos = S().waitlistPos || (C.waitlist(S()).findIndex(x => x.id === b.id) + 1); banner = `<div class="alert warn"><div><b>${isNew ? 'You are on the waiting list.' : 'Waiting list'} — position ${pos}.</b> If a place becomes free, you will receive an offer with a time limit to accept.</div></div>`; }
     else if (b.status === 'offered') banner = `<div class="alert info"><div><b>A place is available for you.</b> Accept by <b>${F(b.offer.expiresAt)}</b> (Namibia time), or the place goes to the next person.</div>
         <div class="row"><button class="btn btn-ok" data-act="pub-accept" data-token="${esc(token)}">Accept the place</button><button class="btn" data-act="pub-decline" data-token="${esc(token)}">Decline</button></div></div>`;
-    else banner = `<div class="alert bad"><div><b>${C.STATUS_LABEL[b.status]}.</b> ${b.status === 'released' ? 'Your place was released because you had not arrived after the presentation started. Please speak to the registration desk.' : 'This booking is no longer active. Contact the organiser if this is a mistake.'}</div></div>`;
+    else banner = `<div class="alert bad"><div><b>${C.STATUS_LABEL[b.status]}.</b> ${b.status === 'released' ? 'Your place was released because you had not arrived after the presentation started. Please speak to the registration desk.' : 'This booking is no longer active. If this is a mistake, please contact us (details below).'}</div></div>`;
     const fbOpen = n >= t.feedbackOpen && n <= t.feedbackClose;
     const lk = links(b);
     return { title: 'My booking', html: `<div class="narrow stack">
@@ -410,11 +411,11 @@
       <section class="panel stack-s"><div class="row-between"><h2>Your details</h2>${!locked && ['confirmed', 'waitlisted', 'offered'].includes(b.status) ? `<button class="btn btn-s" data-act="pub-edit" data-token="${esc(token)}">Correct my details</button>` : ''}</div>
         <dl class="kv"><dt>Name</dt><dd>${nameOf(b)}</dd><dt>Profession</dt><dd>${profOf(b)}</dd><dt>HPCNA no.</dt><dd>${b.hpcna ? esc(b.hpcna) : '<span class="muted">Not given — staff will review</span>'}</dd>
         <dt>Mobile</dt><dd>${esc(b.phone) || '—'}</dd><dt>Email</dt><dd>${esc(b.email) || '—'}</dd><dt>Contact by</dt><dd>${C.CHANNELS[b.channel]}</dd><dt>Future news</dt><dd>${b.consentMarketing ? 'Yes' : 'No'}</dd></dl>
-        ${locked ? '<p class="small muted">Your certificate has been issued, so details are locked. Contact the organiser for a correction.</p>' : '<p class="small muted">Please make sure your name and registration number are correct. They appear on your certificate.</p>'}</section>
+        ${locked ? '<p class="small muted">Your certificate has been issued, so details are locked. Please contact us for a correction (details below).</p>' : '<p class="small muted">Please make sure your name and registration number are correct. They appear on your certificate.</p>'}</section>
       <section class="panel stack-s"><h2>This link</h2><p class="small">This is your private booking link. Keep it safe and do not share it.</p>
         <div class="linkbox"><code>${esc(lk.manage)}</code><button class="btn btn-s" data-act="copy" data-text="${esc(lk.manage)}">Copy</button></div>
         ${['confirmed', 'waitlisted', 'offered'].includes(b.status) && !b.arrival && n < t.eventStart ? `<div><button class="btn btn-danger" data-act="pub-cancel" data-token="${esc(token)}">Cancel my booking</button></div>` : ''}</section>
-      <p class="small muted">Questions: ${esc(e.organiser)}, <span class="mono">${esc(e.phone)}</span>, <span class="mono">${esc(e.emails[0])}</span></p>
+      <p class="small muted">Questions: ${contactsHtml()}</p>
     </div>` };
   }
 
@@ -449,7 +450,7 @@
     if (b.feedback) return { title: 'Evaluation', html: `<div class="narrow stack">${head}<div class="alert ok"><div><b>Thank you, ${esc(b.firstName)}. Your evaluation has been received.</b> Your certificate will be available after the remaining checks and release by the administrator.</div></div><a class="btn" href="#m-${esc(token)}">Back to my booking</a></div>` };
     if (b.status !== 'confirmed') return { title: 'Evaluation', html: `<div class="narrow stack">${head}<div class="alert bad"><div>The evaluation is for booked attendees.</div></div></div>` };
     if (n < t.feedbackOpen) return { title: 'Evaluation', html: `<div class="narrow stack">${head}<div class="alert info"><div>The evaluation opens at <b>${F(t.feedbackOpen)}</b>, after the presentation.</div></div><a class="btn" href="#m-${esc(token)}">Back to my booking</a></div>` };
-    if (n > t.feedbackClose) return { title: 'Evaluation', html: `<div class="narrow stack">${head}<div class="alert bad"><div>The online evaluation has closed. Please contact the organiser.</div></div></div>` };
+    if (n > t.feedbackClose) return { title: 'Evaluation', html: `<div class="narrow stack">${head}<div class="alert bad"><div>The online evaluation has closed. Please contact us: ${contactsHtml()}.</div></div></div>` };
     const fs = A.forms.fb || {};
     return { title: 'Evaluation', html: `<div class="narrow stack">${head}
       <div class="alert warn"><div><b>NO FEEDBACK, NO CERTIFICATE.</b> Your answers are stored without your name. We only record that you have submitted.</div></div>
@@ -484,7 +485,7 @@
   }
   function vCertPublic(token) {
     const r = C.certByToken(S(), token);
-    if (!r) return { title: 'Certificate', html: `<div class="narrow panel"><h1>Certificate link not valid</h1><p>This link is not valid${isRemote() ? '' : ' on this device'}. Please use the latest link sent to you, or contact the organiser.</p></div>` };
+    if (!r) return { title: 'Certificate', html: `<div class="narrow panel"><h1>Certificate link not valid</h1><p>This link is not valid${isRemote() ? '' : ' on this device'}. Please use the latest link sent to you, or contact us: ${contactsHtml()}.</p></div>` };
     if (r.cert.status !== 'current') return { title: 'Certificate', html: `<div class="narrow panel stack"><h1>This certificate was replaced</h1><p>A corrected version was issued on ${F(r.cert.supersededAt)}. Please use the newest link sent to you, or open your booking link.</p></div>` };
     return { title: 'Certificate', html: `<div class="stack" style="max-width:980px;margin:0 auto">
       <div><div class="eyebrow">Certificate of attendance</div><h1>${esc(r.cert.snapshot.firstName + ' ' + r.cert.snapshot.lastName)}</h1>
@@ -523,7 +524,7 @@
       return { title: 'First-time setup', html: `<div class="narrow stack"><h1>Set up the administrator</h1>
         <p class="muted">This real-data set has no staff accounts yet. Create the administrator account first. The PIN protects this browser only; it is not a secure login.</p>
         <form class="panel form" data-form="setup">${fs.message ? `<div class="form-errors">${esc(fs.message)}</div>` : ''}
-          <div class="field"><label for="su-name">Administrator name</label><input type="text" id="su-name" name="name" value="${esc(E().organiser)}"></div>
+          <div class="field"><label for="su-name">Administrator name</label><input type="text" id="su-name" name="name" value=""></div>
           <div class="field"><label for="su-pin">Choose a PIN (4–8 digits)</label><input type="password" id="su-pin" name="pin" inputmode="numeric" autocomplete="new-password"></div>
           <button class="btn btn-primary btn-xl" type="submit">Create administrator</button></form></div>` };
     }
@@ -1116,7 +1117,7 @@
         <div class="two">${inp('presenter', 'Presenter', e.presenter)}${inp('presenterTitle', 'Presenter title', e.presenterTitle)}</div>${inp('presenterSpecialty', 'Presenter specialty (attendance register)', e.presenterSpecialty || '')}
         <div class="two">${inp('audience', 'Audience', e.audience)}${inp('fee', 'Cost', e.fee)}</div>
         <div class="two">${inp('provider', 'Provider', e.provider)}${inp('providerNumber', 'Provider number', e.providerNumber)}</div>
-        <div class="two">${inp('organiser', 'Organiser', e.organiser)}${inp('phone', 'Organiser telephone', e.phone)}</div>${inp('emails', 'Organiser emails (comma separated)', e.emails.join(', '))}
+        <h3>Contact details shown to attendees</h3>${[0, 1].map(i => { const c = C.contactsOf(e)[i] || {}; return `<div class="two">${inp('cphone' + i, `Contact ${i + 1}: phone`, c.phone || '')}${inp('cemail' + i, `Contact ${i + 1}: email`, c.email || '')}</div>`; }).join('')}
         <h2>Programme</h2><p class="small muted">Arrival, welcome (event start), presentation, Q&amp;A end (completion opens) and evaluation drive the rules.</p>
         ${e.programme.map((p, i) => `<div class="two"><div class="field"><label for="pg-l${i}">${esc(p.key)}</label><input type="text" id="pg-l${i}" name="pl${i}" value="${esc(p.label)}"></div><div class="two"><div class="field"><label for="pg-s${i}">Start</label><input type="time" id="pg-s${i}" name="ps${i}" value="${esc(p.start)}"></div><div class="field"><label for="pg-e${i}">End</label><input type="time" id="pg-e${i}" name="pe${i}" value="${esc(p.end)}"></div></div></div>`).join('')}
         <h2>Places and deadlines</h2>
@@ -1315,8 +1316,8 @@
       run((st, c) => { ids.forEach(id => C.confirmCompletion(st, c, actor(), id, 'register', tm == null ? undefined : tm)); return ids.length; }, k => `Completion confirmed for ${k} attendee(s).`); },
     clock: (form) => { const v = new FormData(form).get('at'); if (!v) return; setClock(Date.parse(v + ':00' + E().utcOffset)); closeModal(); expirySweep(); render(); },
     ev: (form) => { const fd = new FormData(form), e = E(), g = k => (fd.get(k) || '').toString().trim();
-      const ch = {}; ['topic', 'title', 'subtitle', 'date', 'refPrefix', 'venue', 'venueAddress', 'venueShort', 'presenter', 'presenterTitle', 'presenterSpecialty', 'audience', 'fee', 'provider', 'providerNumber', 'organiser', 'phone', 'publicWording', 'about', 'feedbackOpensTime'].forEach(k => ch[k] = g(k));
-      ch.emails = g('emails').split(',').map(x => x.trim()).filter(Boolean);
+      const ch = {}; ['topic', 'title', 'subtitle', 'date', 'refPrefix', 'venue', 'venueAddress', 'venueShort', 'presenter', 'presenterTitle', 'presenterSpecialty', 'audience', 'fee', 'provider', 'providerNumber', 'publicWording', 'about', 'feedbackOpensTime'].forEach(k => ch[k] = g(k));
+      ch.contacts = [0, 1].map(i => ({ phone: g('cphone' + i), email: g('cemail' + i) })).filter(c => c.phone || c.email);
       ['publicCap', 'contingencyCap', 'maxCap', 'offerHours', 'eventDayOfferHours', 'minOfferMinutes'].forEach(k => ch[k] = Number(g(k)));
       ch.rsvpClose = g('rsvpClose') + ':00' + e.utcOffset;
       ch.programme = e.programme.map((p, i) => ({ key: p.key, label: g('pl' + i), start: g('ps' + i), end: g('pe' + i) }));

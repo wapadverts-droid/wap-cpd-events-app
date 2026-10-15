@@ -10,6 +10,7 @@
 
 - **16 Oct 2026 (b)** — Check-in by name is the main method: booking page says "Your place is confirmed. Give your name at the registration desk from 17:30." with a smaller, optional QR code. Check-in page leads with name/phone search (QR scan is a small optional button). Completion leads with the signed register; QR check-out stays available as a secondary option. Confirmation message wording matches.
 - **16 Oct 2026 (c)** — Presenter photo: small square photo (64 px) beside the presenter's name in Event details on the landing page, below the RSVP box. Supplied photo cropped from the image provided by the organiser (assets/presenter.jpg). Administrator can replace it, restore it or hide it in Settings.
+- **16 Oct 2026 (d)** — Contact details: the organiser's name and number are no longer shown. Attendees see two contacts everywhere (event page, booking page, footer, closed/invalid-link messages, prepared messages): +264 81 220 9167 · Executive@rcempiremedical.com, or +264 81 695 1252 · marketing@wappharm.com. Editable in Settings as two contact lines. Older saved data without contacts shows these defaults.
 
 ## Decisions taken
 - Pending offers hold places. Offers go in queue order; the administrator may skip the queue with a recorded reason. Offers last 24 h, 2 h on the event day, and are capped at event start (18:00). Windows under 30 minutes are refused and handled at the desk as late cases.

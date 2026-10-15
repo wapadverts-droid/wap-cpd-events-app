@@ -85,6 +85,11 @@
     cancelled: 'Cancelled', declined: 'Offer declined', expired: 'Offer expired', released: 'Place released'
   };
 
+  function contactsOf(event) {
+    const list = (event && Array.isArray(event.contacts) && event.contacts.length) ? event.contacts : defaultEvent().contacts;
+    return list.filter(c => c && (clean(c.phone) || clean(c.email)));
+  }
+  const contactText = event => contactsOf(event).map(c => [clean(c.phone), clean(c.email)].filter(Boolean).join(' · ')).join(', or ');
   function defaultEvent() {
     return {
       title: 'Clinical Update on Rhinosinusitis',
@@ -104,9 +109,14 @@
       fee: 'Free',
       provider: 'WAP Medical Supplies',
       providerNumber: 'ORG01637',
-      organiser: 'Tawanda Amedio Taderera',
-      phone: '0814285408',
-      emails: ['tawanda@wappharm.com', 'marketing@wappharm.com'],
+      organiser: 'WAP Medical Supplies',
+      // contact details shown to attendees (no personal names)
+      contacts: [
+        { phone: '+264 81 220 9167', email: 'Executive@rcempiremedical.com' },
+        { phone: '+264 81 695 1252', email: 'marketing@wappharm.com' }
+      ],
+      phone: '+264 81 220 9167',
+      emails: ['Executive@rcempiremedical.com', 'marketing@wappharm.com'],
       about: 'This session gives practical information on rhinosinusitis: how to recognise it, how it is assessed and managed, and when to refer patients to a specialist.',
       objectives: [
         'Distinguish acute and chronic rhinosinusitis and recognise common presentations.',
@@ -385,7 +395,7 @@
       }
       if (now > t.eventEnd) fail('closed', 'The event has ended. New registrations are closed.');
     } else {
-      if (now >= t.rsvpClose) fail('rsvp_closed', `Online RSVPs closed at ${fmt(t.rsvpClose, state.event.timezone)}. Please contact the organiser.`);
+      if (now >= t.rsvpClose) fail('rsvp_closed', `Online RSVPs closed at ${fmt(t.rsvpClose, state.event.timezone)}. Please contact us: ${contactText(state.event)}.`);
     }
     const val = validateAttendee(input, { staff: isStaff });
     if (!val.ok) { const e = new RuleError('invalid', 'Please check the highlighted fields.'); e.errors = val.errors; throw e; }
@@ -528,7 +538,7 @@
     if (b.status !== 'offered') fail('state', 'There is no open offer on this booking.');
     if (ctx.now >= b.offer.expiresAt) {
       expireOffer(state, ctx, b);
-      fail('offer_expired', 'Sorry, this offer has expired and the place has been released. Please contact the organiser.');
+      fail('offer_expired', `Sorry, this offer has expired and the place has been released. Please contact us: ${contactText(state.event)}.`);
     }
     b.offer.outcome = accept ? 'accepted' : 'declined';
     b.offer.respondedAt = ctx.now;
@@ -805,7 +815,7 @@
     if (b.status !== 'confirmed') fail('state', 'Feedback is for booked attendees.');
     const t = times(state.event);
     if (ctx.now < t.feedbackOpen) fail('not_open', `The evaluation opens at ${fmt(t.feedbackOpen, state.event.timezone)}.`);
-    if (ctx.now > t.feedbackClose) fail('closed', 'The online evaluation has closed. Please contact the organiser.');
+    if (ctx.now > t.feedbackClose) fail('closed', `The online evaluation has closed. Please contact us: ${contactText(state.event)}.`);
     if (b.feedback) fail('already', 'Thank you. Your evaluation has already been received.');
     const val = validateFeedback(answers);
     if (!val.ok) { const e = new RuleError('invalid', 'Please answer the required questions.'); e.errors = val.errors; throw e; }
@@ -965,7 +975,7 @@
     const name = b.firstName;
     const when = `${fmtDate(t.eventStart, tz)}, ${e.programme[0].start}–${prog(e, 'dinner') ? prog(e, 'dinner').end : ''}`;
     const where = `${e.venue}, ${e.venueAddress}`;
-    const sign = `\n\n${e.provider} CPD team\n${e.phone} · ${e.emails[0]}`;
+    const sign = `\n\n${e.provider} CPD team\n` + contactsOf(e).map(c => [clean(c.phone), clean(c.email)].filter(Boolean).join(' · ')).join('\n');
     const L = links || {};
     switch (type) {
       case 'confirmation':
@@ -1023,7 +1033,7 @@
 
   // ---------- settings & staff ----------
   const EVENT_FIELDS = ['title', 'topic', 'subtitle', 'date', 'venue', 'venueAddress', 'venueShort', 'presenter', 'presenterTitle', 'presenterSpecialty', 'audience', 'fee',
-    'provider', 'providerNumber', 'organiser', 'phone', 'emails', 'publicCap', 'contingencyCap', 'maxCap', 'rsvpClose', 'offerHours',
+    'provider', 'providerNumber', 'organiser', 'phone', 'emails', 'contacts', 'publicCap', 'contingencyCap', 'maxCap', 'rsvpClose', 'offerHours',
     'eventDayOfferHours', 'minOfferMinutes', 'feedbackOpensTime', 'feedbackCloseDays', 'refPrefix', 'publicWording', 'about', 'programme', 'objectives'];
   function updateEvent(state, ctx, actor, changes) {
     const s = need(state, actor, 'settings.edit');
@@ -1039,6 +1049,9 @@
     if (!/^\d{4}-\d{2}-\d{2}$/.test(next.date)) fail('invalid', 'Date must be YYYY-MM-DD.');
     if (isNaN(Date.parse(next.rsvpClose))) fail('invalid', 'RSVP closing time is not valid.');
     if (!/^[A-Z0-9]{2,8}$/.test(next.refPrefix)) fail('invalid', 'Reference prefix: 2–8 capital letters or numbers.');
+    if (!Array.isArray(next.contacts) || !next.contacts.some(c => c && (clean(c.phone) || clean(c.email)))) fail('invalid', 'Enter at least one contact phone number or email.');
+    next.contacts = next.contacts.map(c => ({ phone: clean(c && c.phone), email: clean(c && c.email) })).filter(c => c.phone || c.email);
+    for (const c of next.contacts) if (c.email && !emailOk(c.email)) fail('invalid', `Contact email "${c.email}" is not valid.`);
     for (const p of next.programme) if (!/^\d{2}:\d{2}$/.test(p.start) || !/^\d{2}:\d{2}$/.test(p.end)) fail('invalid', 'Programme times must be HH:MM.');
     const prev = state.event;
     state.event = next;
@@ -1139,7 +1152,7 @@
 
   const api = {
     SCHEMA, RuleError, PROFESSIONS, CHANNELS, ROLES, PERMS, SURVEY, STATUS_LABEL, MSG_STATUS,
-    defaultEvent, createState, times, localDate, fmt, fmtTime, fmtDate, isEventDay, normPhone,
+    defaultEvent, contactsOf, contactText, createState, times, localDate, fmt, fmtTime, fmtDate, isEventDay, normPhone,
     login, logout, staffFor, can, need, capacity, checkInvariants, waitlist, publicSummary,
     validateAttendee, findDuplicates, createBooking, updateDetails, cancelBooking, isLocked,
     offerWindow, makeOffer, respondToOffer, processExpiries, confirmLate, allocateContingencyFor, releaseUnused, reinstate,

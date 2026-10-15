@@ -346,3 +346,20 @@ test('persistence: data survives reload; failed rule saves nothing', async () =>
   const live = createStore({ storage, key: 'live' });
   assert.equal(live.read(), null);
 });
+
+test('contact details: two public contacts, no organiser name; editable and validated', () => {
+  const s = fresh();
+  const b = CPD.createBooking(s.state, s.ctx, null, person(), {});
+  const msg = CPD.messageText(s.state, b, 'confirmation', {}).body;
+  assert.match(msg, /\+264 81 220 9167 · Executive@rcempiremedical\.com\n\+264 81 695 1252 · marketing@wappharm\.com$/);
+  assert.ok(!/Tawanda|0814285408/.test(JSON.stringify(s.state.event)), 'old organiser details removed');
+  // older saved data without contacts falls back to the new contacts
+  const old = JSON.parse(JSON.stringify(s.state.event)); delete old.contacts; old.organiser = 'Someone'; old.phone = '000';
+  assert.equal(CPD.contactText(old), '+264 81 220 9167 · Executive@rcempiremedical.com, or +264 81 695 1252 · marketing@wappharm.com');
+  throwsCode(() => CPD.updateEvent(s.state, s.ctx, s.admin, { contacts: [] }), 'invalid');
+  throwsCode(() => CPD.updateEvent(s.state, s.ctx, s.admin, { contacts: [{ phone: '1', email: 'not-an-email' }] }), 'invalid');
+  CPD.updateEvent(s.state, s.ctx, s.admin, { contacts: [{ phone: '+264 81 000 0000', email: '' }] });
+  assert.equal(CPD.contactText(s.state.event), '+264 81 000 0000');
+  s.ctx.now = Date.parse('2026-10-23T12:00:00+02:00');
+  assert.throws(() => CPD.createBooking(s.state, s.ctx, null, person(), {}), e => /contact us: \+264 81 000 0000/.test(e.message));
+});
