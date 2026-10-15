@@ -99,6 +99,7 @@
       presenter: 'Dr Buhlebenkosi Jacqueline Hlomani',
       presenterTitle: 'Specialist Otorhinolaryngologist',
       presenterSpecialty: 'Otorhinolaryngology',
+      presenterPhoto: null, // null = supplied photo, 'none' = no photo, or an uploaded image
       audience: 'Doctors, pharmacists, nurses and allied health professionals',
       fee: 'Free',
       provider: 'WAP Medical Supplies',
@@ -1085,6 +1086,13 @@
     audit(state, ctx, whoStaff(s), 'Logo replaced', '', '');
     return null;
   }
+  function setPresenterPhoto(state, ctx, actor, value) {
+    const s = need(state, actor, 'settings.edit');
+    if (value != null && value !== 'none' && (typeof value !== 'string' || !/^data:image\/(png|jpeg);base64,/.test(value) || value.length > 900000)) fail('invalid', 'Use a PNG or JPEG image under 600 KB.');
+    state.event.presenterPhoto = value == null ? null : value;
+    audit(state, ctx, whoStaff(s), value == null ? 'Presenter photo reset to supplied photo' : (value === 'none' ? 'Presenter photo removed' : 'Presenter photo replaced'), '', '');
+    return null;
+  }
   function setStaffActive(state, ctx, actor, staffId, active) {
     const s = need(state, actor, 'staff.manage');
     const t = state.staff.find(x => x.id === staffId);
@@ -1140,7 +1148,7 @@
     validateFeedback, submitFeedback, recordPaperFeedback, addPaperResponse, feedbackSummary,
     approvalComplete, blockers, certStatus, currentCert, releaseCertificate, releaseAllReady, correctCertificate, certByToken,
     messageText, prepareMessage, setMessageStatus,
-    updateEvent, updateApproval, updateSignatory, addStaff, setStaffActive, resetPin, setLogo,
+    updateEvent, updateApproval, updateSignatory, addStaff, setStaffActive, resetPin, setLogo, setPresenterPhoto,
     stats, bookingByToken, findBooking, fullName, prng, HOUR, MIN, DAY
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

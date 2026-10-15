@@ -13,6 +13,8 @@ js = '\n'.join((src / f).read_text() for f in ['core.js', 'seed.js', 'store.js',
 html = (src / 'template.html').read_text()
 html = html.replace('/*__CSS__*/', (src / 'styles.css').read_text())
 html = html.replace('/*__LOGO__*/', 'data:image/jpeg;base64,' + logo)
+presenter = base64.b64encode((root / 'assets' / 'presenter.jpg').read_bytes()).decode()
+html = html.replace('/*__PRESENTER__*/', 'data:image/jpeg;base64,' + presenter)
 html = html.replace('/*__JS__*/', js.replace('</script', '<\\/script'))
 out = root / 'index.html'
 out.write_text(html)

@@ -143,6 +143,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--focus); outline:
 .facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 16px; margin-top: 18px; }
 .facts dt { font-weight: 700; color: var(--muted); font-size: 0.9rem; padding-top: 2px; }
 .facts dd { margin: 0; }
+.presenter { display: flex; gap: 12px; align-items: center; }
+.presenter-photo { width: 64px; height: 64px; object-fit: cover; border-radius: 4px; flex: none; border: 1px solid var(--line); background: #fff; }
 .status-card { border-radius: var(--r); padding: 22px; background: var(--surface); border: 2px solid var(--accent); display: flex; flex-direction: column; gap: 14px; }
 .status-card .big { font-family: var(--f-display); font-size: 3rem; font-weight: 800; line-height: 1; font-stretch: 87%; }
 .prog { width: 100%; border-collapse: collapse; }

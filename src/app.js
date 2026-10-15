@@ -158,6 +158,7 @@
     return { manage: base() + '#m-' + b.token, feedback: base() + '#f-' + b.token, certificate: cert ? base() + '#c-' + cert.token : '' };
   }
   const logo = () => E().logo || window.WAP_LOGO || '';
+  const presenterPhoto = () => { const p = E().presenterPhoto; return p === 'none' ? '' : (p || window.WAP_PRESENTER || ''); };
   const nameOf = b => esc(b.firstName + ' ' + b.lastName);
   const profOf = b => esc(b.profession === 'Other' ? (b.professionOther || 'Other') : b.profession);
   function go(h) { if (location.hash.slice(1) === h) render(); else location.hash = h; }
@@ -303,7 +304,7 @@
           <dl class="facts">
             <dt>Date</dt><dd>${esc(C.fmtDate(t.eventStart, tz()))}, ${esc(e.programme[0].start)}–${esc(e.programme[e.programme.length - 1].end)}</dd>
             <dt>Venue</dt><dd>${esc(e.venue)}, ${esc(e.venueAddress)}</dd>
-            <dt>Presenter</dt><dd>${esc(e.presenter)}, ${esc(e.presenterTitle)}</dd>
+            <dt>Presenter</dt><dd>${presenterPhoto() ? `<span class="presenter"><img class="presenter-photo" src="${esc(presenterPhoto())}" alt="Photo of ${esc(e.presenter)}" width="64" height="64"><span>${esc(e.presenter)}, ${esc(e.presenterTitle)}</span></span>` : `${esc(e.presenter)}, ${esc(e.presenterTitle)}`}</dd>
             <dt>For</dt><dd>${esc(e.audience)}</dd>
             <dt>Cost</dt><dd>${esc(e.fee)}</dd>
             <dt>Provider</dt><dd>${esc(e.provider)} · accredited provider ${esc(e.providerNumber)}</dd>
@@ -1128,6 +1129,7 @@
         <button class="btn btn-primary btn-xl" type="submit">Save event settings</button>
       </form>
       <section class="panel stack-s"><h2>Logo</h2><div class="row"><img src="${logo()}" alt="Current logo" style="width:90px;background:#fff;border-radius:8px;padding:4px"><label class="btn" for="logo-file" style="cursor:pointer">Replace logo…</label><input type="file" id="logo-file" accept="image/png,image/jpeg" data-change="logo" hidden>${e.logo ? '<button class="btn" data-act="logo-reset">Use supplied logo</button>' : ''}</div></section>
+      <section class="panel stack-s"><h2>Presenter photo</h2><p class="small muted">Shown next to the presenter on the event page. Use a photo the presenter has agreed to.</p><div class="row">${presenterPhoto() ? `<img src="${esc(presenterPhoto())}" alt="Current presenter photo" class="presenter-photo">` : '<span class="muted">No photo shown.</span>'}<label class="btn" for="presenter-file" style="cursor:pointer">Replace photo…</label><input type="file" id="presenter-file" accept="image/png,image/jpeg" data-change="presenter-photo" hidden>${e.presenterPhoto ? '<button class="btn" data-act="presenter-reset">Use supplied photo</button>' : ''}${e.presenterPhoto !== 'none' ? '<button class="btn" data-act="presenter-remove">Show no photo</button>' : ''}</div></section>
       <section class="panel stack-s"><h2>Staff access</h2>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>${S().staff.map(s => `<tr><td>${esc(s.name)}${s.email ? `<div class="small muted">${esc(s.email)}</div>` : ''}</td><td>${C.ROLES[s.role]}</td><td>${s.active ? '<span class="pill p-ok">Active</span>' : '<span class="pill p-none">Deactivated</span>'}</td>
           <td><div class="row"><button class="btn btn-s" data-act="staff-toggle" data-id="${s.id}">${s.active ? 'Deactivate' : 'Reactivate'}</button>${isRemote() ? '' : `<button class="btn btn-s" data-act="staff-pin" data-id="${s.id}">Reset PIN…</button>`}</div></td></tr>`).join('')}</tbody></table></div>
@@ -1260,6 +1262,8 @@
     'pdf-regform': () => pdfSave(Pdf.registrationForm(S()), 'registration-form.pdf'),
     'pdf-checkin': () => pdfSave(Pdf.checkinList(S(), S().bookings.filter(b => b.status === 'confirmed').sort((a, b) => a.lastName.localeCompare(b.lastName))), 'desk-checkin-list.pdf'),
     'export': el => doExport(el.dataset.kind),
+    'presenter-reset': () => run((st, c) => C.setPresenterPhoto(st, c, actor(), null), 'Supplied presenter photo restored.'),
+    'presenter-remove': () => run((st, c) => C.setPresenterPhoto(st, c, actor(), 'none'), 'Presenter photo hidden.'),
     'logo-reset': () => run((st, c) => C.setLogo(st, c, actor(), null), 'Supplied logo restored.'),
     'staff-toggle': el => { const s = S().staff.find(x => x.id === el.dataset.id); run((st, c) => C.setStaffActive(st, c, actor(), s.id, !s.active), 'Staff access updated.'); },
     'staff-pin': el => ask({ title: 'Reset PIN', fields: [{ name: 'pin', label: 'New PIN (4–8 digits)' }], onOk: async f => { if (!/^\d{4,8}$/.test(f.pin)) { A.modal.error = 'Use 4 to 8 digits.'; return renderModal(); } const h = await pinHash(f.pin); run((st, c) => C.resetPin(st, c, actor(), el.dataset.id, h), 'PIN reset.'); } })
@@ -1327,6 +1331,7 @@
     'qr-photo': el => { if (el.files && el.files[0]) readQrPhoto(el.files[0]); el.value = ''; },
     'pfb-toggle': el => { A.forms.pfb = Object.assign(A.forms.pfb || {}, { withAnswers: el.checked }); renderModal(); },
     'sig-img': el => readImage(el, 300000, dataUrl => run((st, c) => C.updateSignatory(st, c, actor(), { name: E().signatory.name, title: E().signatory.title, image: dataUrl }), 'Signature image saved.')),
+    'presenter-photo': el => readImage(el, 600000, dataUrl => run((st, c) => C.setPresenterPhoto(st, c, actor(), dataUrl), 'Presenter photo replaced.')),
     'logo': el => readImage(el, 600000, dataUrl => run((st, c) => C.setLogo(st, c, actor(), dataUrl), 'Logo replaced.')),
     'restore': el => { const f = el.files && el.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { try { const data = JSON.parse(r.result); if (!data || !Array.isArray(data.bookings) || !data.event) throw new Error('Not a backup file'); if (data.mode !== A.mode) throw new Error(`This is a ${data.mode} backup; switch to that data set first.`);
       ask({ title: 'Restore backup?', body: `This replaces all ${A.mode} data in this browser with the backup (${data.bookings.length} bookings).`, danger: true, ok: 'Replace with backup', onOk: () => { if (!can('data.restore')) return toast('Administrator only.', 'bad'); data.sessions = {}; data.rev = (S().rev || 0) + 1; A.store.write(data); A.state = data; setSession(null); closeModal(); toast('Backup restored. Please sign in again.', 'ok'); go('staff'); } });
