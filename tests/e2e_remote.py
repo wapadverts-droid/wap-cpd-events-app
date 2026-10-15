@@ -64,9 +64,10 @@ try:
         c1, a = new_page(browser)
         a.goto('http://app.test/'); a.wait_for_selector('.status-card')
         ok('shared database is the default; RSVPs open with 50 of 50', re.search(r'50\s+of 50 places left', a.inner_text('.status-card')), a.inner_text('.status-card'))
-        ok('test-database banner shown', 'TEST DATABASE' in a.inner_text('.topbar') and 'made-up attendee details' in a.inner_text('.modebar'))
+        ok('live: no test banner or labels', 'TEST DATABASE' not in a.inner_text('.topbar') and a.locator('.modebar').count() == 0)
         a.screenshot(path=str(SHOTS / 'r-home.png'))
         a.click('text=RSVP to secure your place'); a.wait_for_selector('form[data-form=rsvp]')
+        ok('spam trap field exists but is hidden from people', a.evaluate("(()=>{const r=document.querySelector('#a-website'); return !!r && r.getBoundingClientRect().right <= 0})()"))
         a.click('form[data-form=rsvp] button[type=submit]'); a.wait_for_selector('.form-errors')
         ok('empty RSVP shows field errors instantly', a.locator('.invalid').count() >= 4)
         fill_rsvp(a, 1); a.wait_for_selector('.ref', timeout=15000)
@@ -118,7 +119,7 @@ try:
         ok('administrator adds a staff member by email', 'helper@example.com' in b.inner_text('main'))
         b.goto('http://app.test/#s-certs'); b.wait_for_selector('text=HPCNA approval details')
         b.locator('[data-act=cert-preview]').first.click(); b.wait_for_selector('.cert-sheet')
-        ok('certificate preview marked as not valid', 'SAMPLE — NOT VALID FOR CPD' in b.inner_text('.cert-sheet') and 'FICTIONAL DEMO' in b.inner_text('.cert-sheet'))
+        ok('certificate preview marked SAMPLE until approval; no demo watermark on live', 'SAMPLE — NOT VALID FOR CPD' in b.inner_text('.cert-sheet') and 'FICTIONAL DEMO' not in b.inner_text('.cert-sheet'))
         b.click('[data-act=close-modal]')
         b.screenshot(path=str(SHOTS / 'r-admin.png'), full_page=True)
 
@@ -133,11 +134,11 @@ try:
         ok('attendee cancels own booking', 'Cancelled' in a.inner_text('main'))
 
         # practice mode is separate
-        x.goto('http://app.test/'); x.wait_for_selector('.status-card')
-        x.click('[data-act=demo-panel]'); x.click('[data-act=mode][data-mode=demo]'); x.wait_for_selector('.status-card'); x.wait_for_timeout(300)
-        ok('practice mode is separate (fresh, on this device)', 'PRACTICE' in x.inner_text('.topbar') and re.search(r'50\s+of 50', x.inner_text('.status-card')))
+        b.goto('http://app.test/#s-settings'); b.wait_for_selector('form[data-form=ev]')
+        b.click('[data-act=mode][data-mode=demo]'); b.wait_for_selector('.status-card'); b.wait_for_timeout(300); x = b
+        ok('staff open practice mode from Settings; it is separate (fresh, on this device)', 'PRACTICE' in x.inner_text('.topbar') and re.search(r'50\s+of 50', x.inner_text('.status-card')))
         x.click('[data-act=demo-panel]'); x.click('[data-act=mode][data-mode=shared]'); x.wait_for_selector('.status-card', timeout=15000)
-        ok('back to shared database', 'TEST DATABASE' in x.inner_text('.topbar') and re.search(r'49\s+of 50', x.inner_text('.status-card')), x.inner_text('.status-card'))
+        ok('back to shared (live) database', 'PRACTICE' not in x.inner_text('.topbar') and re.search(r'49\s+of 50', x.inner_text('.status-card')), x.inner_text('.status-card'))
 
         # phone
         c4, m = new_page(browser, 390, 844)

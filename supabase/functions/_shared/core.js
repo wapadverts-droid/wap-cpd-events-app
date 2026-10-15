@@ -398,6 +398,7 @@
     } else {
       if (now >= t.rsvpClose) fail('rsvp_closed', `Online RSVPs closed at ${fmt(t.rsvpClose, state.event.timezone)}. Please contact us: ${contactText(state.event)}.`);
     }
+    if (!isStaff && input && clean(input.website)) fail('spam', 'Your RSVP could not be accepted. Please try again, or contact us.');
     const val = validateAttendee(input, { staff: isStaff });
     if (!val.ok) { const e = new RuleError('invalid', 'Please check the highlighted fields.'); e.errors = val.errors; throw e; }
     const v = val.value;

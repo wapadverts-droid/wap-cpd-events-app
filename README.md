@@ -6,16 +6,13 @@ First event: **Clinical Update on Rhinosinusitis**, Friday 23 October 2026, Epik
 
 Website: https://wapadverts-droid.github.io/wap-cpd-events-app/
 
-## Status: test version with a shared database
+## Status: LIVE (since 16 October 2026)
 
-Bookings from every phone go to one shared database (Supabase project `wap-cpd-test`), so staff see all bookings and the 50-place limit holds for everyone. **Use made-up attendee details only.** Test data will be cleared, and a separate live project created, before real RSVPs open.
+Real RSVPs are taken at the website above. Bookings from every phone go to one shared database (Supabase project `wap-cpd-test`, now serving the live record), so staff see all bookings and the 50-place limit holds for everyone. Earlier test bookings are archived in the same database (record `main`) and are not shown.
 
-Still to do before live use:
-1. Create the live Supabase project and switch the website to it.
-2. Confirm that storing attendee details in Supabase's European region is acceptable for WAP (no African region is available).
-3. Check current HPCNA requirements for certificate content and register submission.
+Known limits: messages are prepared for staff to send by hand (no automatic WhatsApp or email); QR scanning reads a photo rather than a live camera feed; HPCNA requirements for certificate content have not been checked against current official guidance. Data is stored in Supabase's European region (accepted by WAP).
 
-Messages are prepared for staff to send by hand (no automatic WhatsApp or email). QR scanning reads a photo rather than a live camera feed.
+Future changes are rehearsed in practice mode (staff: Settings → Practice mode) before being uploaded.
 
 ## How it works
 

@@ -356,7 +356,7 @@
   function readAttendee(form) {
     const fd = new FormData(form), g = k => (fd.get(k) || '').toString();
     return { firstName: g('firstName'), lastName: g('lastName'), profession: g('profession'), professionOther: g('professionOther'), hpcnaStatus: g('hpcnaStatus') || 'provided',
-      hpcna: g('hpcna'), phone: g('phone'), email: g('email'), channel: g('channel'), consentEvent: fd.get('consentEvent') === 'on', consentMarketing: fd.get('consentMarketing') === 'on' };
+      hpcna: g('hpcna'), phone: g('phone'), email: g('email'), channel: g('channel'), consentEvent: fd.get('consentEvent') === 'on', consentMarketing: fd.get('consentMarketing') === 'on', website: g('website') };
   }
 
   function vRsvp() {
@@ -367,7 +367,7 @@
       <div><a href="#home" class="small">← Event details</a><h1 style="margin-top:6px">${ps.status === 'open' ? 'RSVP' : 'Join the waiting list'}</h1>
       <p class="muted" style="margin-top:6px">${esc(E().topic)} · ${esc(C.fmtDate(t.eventStart, tz()))} · ${esc(E().venueShort)}</p></div>
       ${ps.status === 'open' ? `<div class="alert ok"><div><b>${ps.publicFree} of ${ps.publicCap} places left.</b> ${esc(E().publicWording)}</div></div>` : `<div class="alert warn"><div><b>All advance-booking places are taken.</b> You will join the waiting list in the order you apply.</div></div>`}
-      <form class="panel form" data-form="rsvp" novalidate>${attendeeFields(fs)}
+      <form class="panel form" data-form="rsvp" novalidate><div class="hp" aria-hidden="true"><label for="a-website">Leave this field empty</label><input type="text" id="a-website" name="website" tabindex="-1" autocomplete="off"></div>${attendeeFields(fs)}
         <button class="btn btn-primary btn-xl" type="submit">${ps.status === 'open' ? 'Book my place' : 'Join the waiting list'}</button>
         <p class="small muted">We use your details to manage this event and issue your certificate. Your feedback answers are stored separately from your name.</p>
       </form></div>`, after: () => { const el = document.getElementById('a-firstName'); if (el && !fs.errors) el.focus({ preventScroll: true }); } };
@@ -1130,6 +1130,7 @@
         <button class="btn btn-primary btn-xl" type="submit">Save event settings</button>
       </form>
       <section class="panel stack-s"><h2>Logo</h2><div class="row"><img src="${logo()}" alt="Current logo" style="width:90px;background:#fff;border-radius:8px;padding:4px"><label class="btn" for="logo-file" style="cursor:pointer">Replace logo…</label><input type="file" id="logo-file" accept="image/png,image/jpeg" data-change="logo" hidden>${e.logo ? '<button class="btn" data-act="logo-reset">Use supplied logo</button>' : ''}</div></section>
+      ${isRemote() ? `<section class="panel stack-s"><h2>Practice mode</h2><p class="small muted">Rehearse with fictional attendees and a simulated clock, saved on this device only. It does not touch the real bookings.</p><div><button class="btn" data-act="mode" data-mode="demo">Open practice mode on this device</button></div></section>` : ''}
       <section class="panel stack-s"><h2>Presenter photo</h2><p class="small muted">Shown next to the presenter on the event page. Use a photo the presenter has agreed to.</p><div class="row">${presenterPhoto() ? `<img src="${esc(presenterPhoto())}" alt="Current presenter photo" class="presenter-photo">` : '<span class="muted">No photo shown.</span>'}<label class="btn" for="presenter-file" style="cursor:pointer">Replace photo…</label><input type="file" id="presenter-file" accept="image/png,image/jpeg" data-change="presenter-photo" hidden>${e.presenterPhoto ? '<button class="btn" data-act="presenter-reset">Use supplied photo</button>' : ''}${e.presenterPhoto !== 'none' ? '<button class="btn" data-act="presenter-remove">Show no photo</button>' : ''}</div></section>
       <section class="panel stack-s"><h2>Staff access</h2>
         <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>${S().staff.map(s => `<tr><td>${esc(s.name)}${s.email ? `<div class="small muted">${esc(s.email)}</div>` : ''}</td><td>${C.ROLES[s.role]}</td><td>${s.active ? '<span class="pill p-ok">Active</span>' : '<span class="pill p-none">Deactivated</span>'}</td>

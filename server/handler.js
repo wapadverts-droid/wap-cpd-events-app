@@ -18,7 +18,6 @@
  * by the local tests. Dependencies are passed in by createHandler().
  */
 
-const ROW_ID = 'main';
 
 // Rules-engine functions the website may ask the server to run.
 const PUBLIC_FNS = new Set(['createBooking', 'updateDetails', 'cancelBooking', 'respondToOffer', 'submitFeedback']);
@@ -72,6 +71,8 @@ export const SCHEMA_SQL = [
 export function createHandler(deps) {
   const { sql, CPD, getUserEmail } = deps;
   const dataset = deps.dataset === 'live' ? 'live' : 'test';
+  // live and test data are kept in separate records ('main' is the test record)
+  const ROW_ID = dataset === 'live' ? 'live' : 'main';
   const clock = deps.clock || (() => Date.now());
   const random = deps.random || cryptoRandom;
   let ready = null;

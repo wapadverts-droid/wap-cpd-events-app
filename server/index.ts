@@ -24,7 +24,8 @@ const handler = createHandler({
   // deno-lint-ignore no-explicit-any
   CPD: (globalThis as any).CPD,
   getUserEmail,
-  dataset: Deno.env.get('CPD_DATASET') === 'live' ? 'live' : 'test',
+  // LIVE since 16 Oct 2026. Set the CPD_DATASET secret to 'test' to use the archived test record.
+  dataset: Deno.env.get('CPD_DATASET') === 'test' ? 'test' : 'live',
   initialStaff: INITIAL_STAFF
 });
 

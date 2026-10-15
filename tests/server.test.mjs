@@ -202,3 +202,34 @@ test('history snapshot is kept (at most hourly) and feedback stays anonymous', a
   assert.equal(cv.view.bookings[0].id, b.id);
   assert.equal(cv.view.certificates[0].demo, true, 'test database certificates are marked as not valid');
 });
+
+test('going live: live data starts empty in its own record; test bookings stay archived and unseen', async () => {
+  const testH = await fresh();
+  await book(testH); await book(testH);
+  const liveH = createHandler({ sql, CPD, getUserEmail, dataset: 'live', initialStaff: INITIAL_STAFF, clock: () => clockNow });
+  const v = await view(liveH);
+  assert.equal(v.view.dataset, 'live');
+  assert.equal(v.view.mode, 'live', 'live certificates carry no test watermark');
+  assert.equal(v.view.summary.publicFree, 50, 'live starts with all 50 places');
+  const admin = await view(liveH, ADMIN);
+  assert.equal(admin.view.bookings.length, 0);
+  assert.equal(admin.view.staff.length, 2, 'same staff logins work on live');
+  assert.ok(!/Tawanda|0814285408/.test(JSON.stringify(v.view.event)), 'no organiser name in live data');
+  const rows = await sql`select id, jsonb_array_length(state->'bookings') as n from public.app_state order by id`;
+  assert.deepEqual(rows.map(r => [r.id, r.n]), [['live', 0], ['main', 2]]);
+  const r = await book(liveH);
+  assert.equal(r.results[0].status, 'confirmed');
+  assert.equal((await view(testH)).view.summary.publicFree, 48, 'test record unchanged');
+});
+
+test('spam protection: an RSVP with the hidden field filled in is refused and nothing is saved', async () => {
+  const h = await fresh();
+  const r = await book(h, person({ website: 'http://spam.example' }));
+  assert.equal(r.ok, false); assert.equal(r.error.code, 'spam');
+  assert.equal((await view(h)).view.summary.publicFree, 50);
+  const ok = await book(h, person({ website: '' }));
+  assert.equal(ok.ok, true);
+  // staff registrations are not affected
+  const s = await act(h, [{ fn: 'createBooking', args: [ME, person({ website: 'x' }), { channel: 'staff', source: 'staff-phone' }] }], PA);
+  assert.equal(s.ok, true, JSON.stringify(s.error));
+});

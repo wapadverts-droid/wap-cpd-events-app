@@ -17,7 +17,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      PROJECT_REF: ezsqpmlmtrmovnikmxrs   # test project (wap-cpd-test)
+      PROJECT_REF: ezsqpmlmtrmovnikmxrs   # Supabase project wap-cpd-test (now serving LIVE data)
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
     steps:
       - name: Check the Supabase access token is saved
@@ -45,5 +45,7 @@ jobs:
           curl -sS --fail-with-body -X POST "https://$PROJECT_REF.supabase.co/functions/v1/cpd" \
             -H 'Content-Type: application/json' \
             -H 'apikey: sb_publishable_pyqhJtDNu1ZzSgYLTokh5A_1velMgFW' \
-            -d '{"op":"view"}' | head -c 300
-          echo
+            -d '{"op":"view"}' > reply.json
+          head -c 300 reply.json; echo
+          grep -q '"ok":true' reply.json
+          grep -q '"dataset":"live"' reply.json && echo "Live data is being served." 

@@ -17,7 +17,7 @@ const postgres = createRequire(path.join(LIB, 'x.js'))('postgres');
 const sql = postgres(process.env.PGURL || 'postgres://postgres@localhost:54329/postgres', { max: 10, onnotice: () => {} });
 
 const PASSWORDS = { 'wapadverts@gmail.com': 'admin-pass', 'executive@rcempiremedical.com': 'pa-pass', 'stranger@example.com': 'x-pass' };
-const handler = createHandler({ sql, CPD, dataset: 'test', initialStaff: INITIAL_STAFF, getUserEmail: async t => (t.startsWith('tok:') ? t.slice(4) : null) });
+const handler = createHandler({ sql, CPD, dataset: process.env.DATASET || 'live', initialStaff: INITIAL_STAFF, getUserEmail: async t => (t.startsWith('tok:') ? t.slice(4) : null) });
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 
 function send(res, status, body) { res.writeHead(status, Object.assign({ 'Content-Type': 'application/json' }, CORS)); res.end(JSON.stringify(body)); }
