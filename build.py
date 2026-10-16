@@ -16,6 +16,16 @@ html = html.replace('/*__LOGO__*/', 'data:image/jpeg;base64,' + logo)
 presenter = base64.b64encode((root / 'assets' / 'presenter.jpg').read_bytes()).decode()
 html = html.replace('/*__PRESENTER__*/', 'data:image/jpeg;base64,' + presenter)
 html = html.replace('/*__JS__*/', js.replace('</script', '<\\/script'))
+import sys
+if '--preview' in sys.argv:
+    # Preview build: practice data only (never touches the live database).
+    target = pathlib.Path(sys.argv[sys.argv.index('--preview') + 1])
+    cfg = (src / 'config.js').read_text()
+    html = html.replace(cfg, 'window.WAPCPD_CONFIG = null; window.WAPCPD_PREVIEW = true;\n')
+    assert 'WAPCPD_PREVIEW = true' in html
+    target.write_text(html)
+    print(target, len(html) // 1024, 'KB (preview)')
+    sys.exit(0)
 out = root / 'index.html'
 out.write_text(html)
 print(out, len(html) // 1024, 'KB')

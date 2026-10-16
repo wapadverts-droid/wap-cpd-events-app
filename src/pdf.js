@@ -187,7 +187,7 @@
     doc.setFont('helvetica', 'normal'); doc.text('• Which areas would you like future CPDs on? (tick or add your own)', 52, y); y += 20;
     for (const t of S.topics.concat(['Other: __________________________'])) { box(doc, 64, y, 10); doc.text(t, 80, y); y += 18; }
     doc.setFontSize(8); doc.setTextColor.apply(doc, GREY);
-    doc.text('NO FEEDBACK, NO CERTIFICATE. Hand this form to reception before you leave.', 40, 810);
+    doc.text('To receive your certificate, attend the full session and complete this evaluation. Hand it to reception before you leave.', 40, 810);
     return doc;
   }
 

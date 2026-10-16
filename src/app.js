@@ -159,6 +159,29 @@
   }
   const logo = () => E().logo || window.WAP_LOGO || '';
   const contactsHtml = sep => C.contactsOf(E()).map(c => [c.phone ? `<span class="mono" style="white-space:nowrap">${esc(c.phone)}</span>` : '', c.email ? `<span class="mono">${esc(c.email)}</span>` : ''].filter(Boolean).join(' · ')).join(sep || ', or ');
+  const CERT_NOTE = 'To receive your certificate, attend the full session and complete the evaluation.';
+  const ICON = {
+    date: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
+    time: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
+    place: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-6.2-6.5-11a6.5 6.5 0 0 1 13 0c0 4.8-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg>',
+    free: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12.5 12.5 20a1.4 1.4 0 0 1-2 0L4 13.5V4h9.5L20 10.5a1.4 1.4 0 0 1 0 2z"/><circle cx="8.3" cy="8.3" r="1.3"/></svg>'
+  };
+  // the essentials, always taken from the event settings
+  function keyFacts(e, t) {
+    const p = k => e.programme.find(x => x.key === k) || {};
+    const arrival = p('arrival').start || (e.programme[0] || {}).start, start = p('welcome').start || p('presentation').start;
+    const fee = /^free$/i.test(String(e.fee || '').trim()) ? 'Free attendance' : `Attendance: ${e.fee}`;
+    return [
+      ['date', esc(C.fmtDate(t.eventStart, tz()))],
+      ['time', `Arrival ${esc(arrival)}${start ? ` · Session starts ${esc(start)}` : ''}`],
+      ['place', esc(e.venueShort || e.venue)],
+      ['free', esc(fee)]
+    ];
+  }
+  const closeShort = t => C.fmt(t.rsvpClose, tz(), { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+  const bookButton = (ps, extraClass) => ps.status === 'open'
+    ? `<a class="btn btn-book btn-xl ${extraClass || ''}" href="#rsvp">RSVP to secure your place</a>`
+    : `<a class="btn btn-book btn-xl ${extraClass || ''}" href="#rsvp">Join the waiting list</a>`;
   const emailOn = () => !!(isRemote() && A.state && A.state.integration && A.state.integration.email);
   const presenterPhoto = () => { const p = E().presenterPhoto; return p === 'none' ? '' : (p || window.WAP_PRESENTER || ''); };
   const nameOf = b => esc(b.firstName + ' ' + b.lastName);
@@ -201,7 +224,7 @@
       <a class="brand" href="#home"><img src="${logo()}" alt="WAP Medical Supplies logo"><div><b>WAP CPD Events</b><span>${esc(E().provider)} · ${esc(E().providerNumber)}</span></div></a>
       <div class="top-actions">
         ${isRemote() ? (S().dataset === 'live' ? '' : '<span class="chip chip-test">TEST DATABASE</span>') : `<span class="chip ${A.mode === 'demo' ? 'chip-demo' : 'chip-live'}">${A.mode === 'demo' ? 'PRACTICE · this device' : 'REAL DATA · this browser'}</span>`}
-        ${staff ? `<a class="btn btn-s btn-ghost" href="#home">Attendee view</a>` : `<a class="btn btn-s btn-ghost" href="#${s ? 's-dash' : 'staff'}">${s ? 'Staff dashboard' : 'Staff sign-in'}</a>`}
+        ${staff ? `<a class="btn btn-s btn-ghost" href="#home">Attendee view</a>` : (s ? `<a class="btn btn-s btn-ghost" href="#s-dash">Staff dashboard</a>` : '')}
         ${s && staff ? `<button class="btn btn-s btn-ghost" data-act="logout">Sign out</button>` : ''}
       </div></div></header>`;
   }
@@ -210,6 +233,10 @@
       if (S().dataset === 'live') return '';
       return `<div class="modebar test" role="note"><span><b>Test version with shared database.</b> Use made-up attendee details only. Test data will be cleared before real bookings open.</span>
         <button class="btn btn-s" data-act="demo-panel">Practice mode</button></div>`;
+    }
+    if (A.mode === 'demo' && window.WAPCPD_PREVIEW) {
+      return `<div class="modebar demo" role="note"><span><b>Preview of the new design.</b> Bookings made here are not real and stay on this device.</span>
+        <button class="btn btn-s" data-act="demo-panel">Preview states</button></div>`;
     }
     if (A.mode === 'demo') {
       const sim = A.clock && A.clock.at;
@@ -221,8 +248,11 @@
       <button class="btn btn-s" data-act="demo-panel">Switch data set</button></div>`;
   }
   function footer() {
-    return `<footer class="foot">${esc(E().provider)} · CPD provider ${esc(E().providerNumber)}<br>Questions: ${contactsHtml()}<br>
-      ${isRemote() ? '' : 'Practice mode: data stays on this device. '}Messages are prepared, not sent automatically. Certificates are not valid until HPCNA approval details are entered and the administrator releases them.${PERSISTENT || isRemote() ? '' : '<br><b>Browser storage is blocked: changes will be lost when you close this page.</b>'}</footer>`;
+    const staff = isStaffView();
+    const ops = staff ? `<p class="foot-ops">${isRemote() ? '' : 'Practice mode: data stays on this device. '}${emailOn() ? 'Confirmation, waiting-list and offer emails are sent automatically; WhatsApp messages are prepared for staff to send.' : 'Messages are prepared for staff to send; nothing is sent automatically.'} Certificates are not valid until HPCNA approval details are entered and the administrator releases them.</p>` : '';
+    return `<footer class="foot">${esc(E().provider)} · CPD provider ${esc(E().providerNumber)}<br>Questions: ${contactsHtml()}${ops}
+      ${PERSISTENT || isRemote() ? '' : '<br><b>Browser storage is blocked: changes will be lost when you close this page.</b>'}
+      ${staff || me() ? '' : '<p class="foot-staff"><a href="#staff">Staff sign-in</a></p>'}</footer>`;
   }
 
   function loadingPage() {
@@ -238,6 +268,7 @@
     return JSON.stringify(currentToken()) !== A.viewTok;
   }
   function render() {
+    document.body.classList.remove('has-sticky');
     const app0 = $('#app');
     if (isRemote() && !A.state) { app0.innerHTML = loadingPage(); return; }
     if (needsFetch()) {
@@ -285,94 +316,123 @@
 
   // ---------- PUBLIC: home ----------
   function vHome() {
-    const e = E(), t = T(), n = now(), ps = pubSummary();
-    let status;
-    if (ps.status === 'open') status = `<div class="eyebrow">Advance booking</div><div><span class="big tnum">${ps.publicFree}</span> <span class="muted">of ${ps.publicCap} places left</span></div>
-      <div class="meter ${ps.publicFree < 6 ? 'full' : ''}"><i style="width:${(100 * (ps.publicCap - ps.publicFree) / ps.publicCap).toFixed(1)}%"></i></div>
-      <a class="btn btn-primary btn-xl" href="#rsvp">RSVP to secure your place</a>`;
-    else if (ps.status === 'waitlist') status = `<div class="eyebrow">Advance booking</div><h2>All advance places are taken</h2><p>Join the waiting list. If a place becomes free, we will send you an offer with a time limit to accept.</p><a class="btn btn-primary btn-xl" href="#rsvp">Join the waiting list</a>`;
-    else status = `<div class="eyebrow">Advance booking</div><h2>Online RSVPs are closed</h2><p>Online RSVPs closed on ${F(t.rsvpClose)}. If you still want to attend, please contact us: ${contactsHtml()}. Staff can register you if a place remains.</p>`;
+    const e = E(), t = T(), ps = pubSummary();
+    const facts = keyFacts(e, t).map(([k, txt]) => `<li>${ICON[k]}<span>${txt}</span></li>`).join('');
+    let cta;
+    if (ps.status === 'open') {
+      const few = ps.publicFree <= 5;
+      cta = `${bookButton(ps)}<p class="avail ${few ? 'few' : ''}" id="avail"><b>${few ? `Only ${ps.publicFree} of ${ps.publicCap} places left` : `${ps.publicFree} of ${ps.publicCap} places available`}</b><span> · RSVPs close ${esc(closeShort(t))} (Namibia time)</span></p>`;
+    } else if (ps.status === 'waitlist') {
+      cta = `${bookButton(ps)}<p class="avail few" id="avail"><b>All ${ps.publicCap} places are taken.</b><span> Join the waiting list and we will contact you if a place becomes free. · RSVPs close ${esc(closeShort(t))} (Namibia time)</span></p>`;
+    } else {
+      cta = `<div class="closed-note"><b>Online RSVPs are closed.</b> They closed ${esc(F(t.rsvpClose))}. If you still want to attend, please contact us: ${contactsHtml()}. Staff can register you if a place remains.</div>`;
+    }
     const prog = e.programme.map(p => `<tr><td>${esc(p.start)}–${esc(p.end)}</td><td>${esc(p.label)}</td></tr>`).join('');
-    return { title: e.topic, html: `<div class="stack home">
-      <section class="hero">
-        <div>
-          <div class="eyebrow">CPD activity · ${esc(e.provider)}</div>
-          <h1>${esc(e.topic)}</h1>
-          <p class="sub">${esc(e.subtitle)}</p>
-        </div>
-        <div class="status-card">${status}<p class="small">${esc(e.publicWording)}</p>${ps.open ? `<p class="small muted">Online RSVPs close ${F(t.rsvpClose)} (Namibia time).</p>` : ''}</div>
-        <div class="panel">
-          <h2>Event details</h2>
-          <dl class="facts">
-            <dt>Date</dt><dd>${esc(C.fmtDate(t.eventStart, tz()))}, ${esc(e.programme[0].start)}–${esc(e.programme[e.programme.length - 1].end)}</dd>
-            <dt>Venue</dt><dd>${esc(e.venue)}, ${esc(e.venueAddress)}</dd>
-            <dt>Presenter</dt><dd>${presenterPhoto() ? `<span class="presenter"><img class="presenter-photo" src="${esc(presenterPhoto())}" alt="Photo of ${esc(e.presenter)}" width="64" height="64"><span>${esc(e.presenter)}, ${esc(e.presenterTitle)}</span></span>` : `${esc(e.presenter)}, ${esc(e.presenterTitle)}`}</dd>
-            <dt>For</dt><dd>${esc(e.audience)}</dd>
-            <dt>Cost</dt><dd>${esc(e.fee)}</dd>
-            <dt>Provider</dt><dd>${esc(e.provider)} · accredited provider ${esc(e.providerNumber)}</dd>
-          </dl>
-        </div>
+    const presenter = `<div class="presenter">${presenterPhoto() ? `<img class="presenter-photo" src="${esc(presenterPhoto())}" alt="Photo of ${esc(e.presenter)}" width="64" height="64">` : ''}<div><b>${esc(e.presenter)}</b><br><span class="muted">${esc(e.presenterTitle)}</span></div></div>`;
+    return { title: e.topic, html: `<div class="home">
+      <section class="intro">
+        <div class="eyebrow">CPD activity · ${esc(e.provider)}</div>
+        <h1>${esc(e.topic)}</h1>
+        <p class="sub">${esc(e.subtitle)}</p>
+        <ul class="keyfacts">${facts}</ul>
+        <div class="cta status-card" id="cta">${cta}</div>
       </section>
-      <div class="grid2">
-        <section class="panel"><h2>Programme</h2><table class="prog">${prog}</table></section>
-        <section class="panel"><h2>About this session</h2><p>${esc(e.about || C.defaultEvent().about)}</p>
-          <p class="small muted" style="margin-top:8px">Certificates are issued after confirmed completion of the session and a completed evaluation: <b>NO FEEDBACK, NO CERTIFICATE.</b> CPD points are subject to HPCNA approval of the activity.</p></section>
-      </div>
+      <section class="panel stack-s"><h2>About this session</h2><p>${esc(e.about || C.defaultEvent().about)}</p>
+        ${presenter}
+        <p class="small muted">${CERT_NOTE} CPD points are subject to HPCNA approval of the activity.</p></section>
+      <section class="panel"><h2>Programme</h2><table class="prog">${prog}</table></section>
+      <section class="panel"><h2>Event details</h2>
+        <dl class="facts">
+          <dt>Venue</dt><dd>${esc(e.venue)}, ${esc(e.venueAddress)}</dd>
+          <dt>For</dt><dd>${esc(e.audience)}</dd>
+          <dt>Provider</dt><dd>${esc(e.provider)} · accredited provider ${esc(e.providerNumber)}</dd>
+          <dt>Places</dt><dd>${esc(e.publicWording)}</dd>
+        </dl></section>
       <section class="panel"><h2>Questions?</h2><p>${contactsHtml()}</p>
-        <p class="small muted" style="margin-top:6px">Already booked? Open the private link in your confirmation message to view, change or cancel your booking.</p></section>
-    </div>` };
+        <p class="small muted" style="margin-top:6px">Already booked? Use the link in your confirmation to view, change or cancel your booking.</p></section>
+    </div>
+    ${ps.open ? `<div class="sticky-cta" id="sticky-cta" hidden>${bookButton(ps, 'btn-block')}</div>` : ''}`,
+      after: stickyCta };
+  }
+  // Mobile: a green RSVP bar appears only once the main RSVP button has scrolled out of view.
+  function stickyCta() {
+    const bar = document.getElementById('sticky-cta'), main = document.querySelector('#cta .btn-book');
+    if (!bar || !main || !('IntersectionObserver' in window)) return;
+    const mq = window.matchMedia('(max-width: 760px)');
+    const io = new IntersectionObserver(([en]) => {
+      const show = mq.matches && !en.isIntersecting && en.boundingClientRect.top < 0;
+      bar.hidden = !show; document.body.classList.toggle('has-sticky', show);
+    });
+    io.observe(main);
   }
 
   // ---------- attendee form ----------
   function attendeeFields(fs, opts) {
     opts = opts || {};
-    const v = Object.assign({ hpcnaStatus: 'provided', channel: 'whatsapp', consentEvent: false, consentMarketing: false }, fs.values || {}), er = fs.errors || {};
-    const f = (name, label, input, hint) => `<div class="field ${er[name] ? 'invalid' : ''}"><label for="${opts.p || 'a'}-${name}">${label}</label>${hint ? `<span class="hint">${hint}</span>` : ''}${input}${er[name] ? `<span class="err">${esc(er[name])}</span>` : ''}</div>`;
+    const v = Object.assign({ hpcnaStatus: 'provided', channel: 'whatsapp', consentEvent: false, consentMarketing: false }, fs.values || {}), er = Object.assign({}, fs.errors || {});
     const id = n => `${opts.p || 'a'}-${n}`;
-    const noReg = v.hpcnaStatus !== 'provided';
+    const opt = '<span class="opt">(optional)</span>';
+    const f = (name, label, input, hint, attrs) => `<div class="field ${er[name] ? 'invalid' : ''}" ${attrs || ''}><label for="${id(name)}">${label}</label>${hint ? `<span class="hint" id="${id(name)}-hint">${hint}</span>` : ''}${input}${er[name] ? `<span class="err" id="${id(name)}-err">${esc(er[name])}</span>` : ''}</div>`;
+    const later = v.hpcnaStatus !== 'provided';
+    const channels = Object.entries(C.CHANNELS).filter(([k]) => opts.staff || k !== 'sms');
+    if (!channels.some(([k]) => k === v.channel)) v.channel = 'whatsapp';
+    const phoneOptional = v.channel === 'email';
+    // "WhatsApp needs a mobile number" belongs beside the mobile field
+    if (er.channel && !er.phone && /mobile/i.test(er.channel)) { er.phone = er.channel; delete er.channel; }
     return `${fs.message ? `<div class="form-errors" role="alert">${esc(fs.message)}</div>` : ''}
-      <div class="two">${f('firstName', 'First name', `<input type="text" id="${id('firstName')}" name="firstName" autocomplete="given-name" value="${esc(v.firstName)}">`)}
-      ${f('lastName', 'Last name', `<input type="text" id="${id('lastName')}" name="lastName" autocomplete="family-name" value="${esc(v.lastName)}">`)}</div>
-      <div class="two">${f('profession', 'Profession', `<select id="${id('profession')}" name="profession"><option value="">Choose…</option>${C.PROFESSIONS.map(p => `<option ${v.profession === p ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>`)}
-      ${f('professionOther', 'If other, which profession?', `<input type="text" id="${id('professionOther')}" name="professionOther" value="${esc(v.professionOther)}">`)}</div>
-      ${f('hpcna', 'HPCNA registration number', `<input type="text" id="${id('hpcna')}" name="hpcna" value="${esc(v.hpcna)}" ${noReg ? 'disabled' : ''} autocapitalize="characters">`, 'This appears on your certificate.')}
-      <div class="field"><span class="lbl">No number to give?</span>
-        <select id="${id('hpcnaStatus')}" name="hpcnaStatus" data-change="hpcna-toggle">
-          <option value="provided" ${v.hpcnaStatus === 'provided' ? 'selected' : ''}>I have entered my registration number</option>
-          <option value="unavailable" ${v.hpcnaStatus === 'unavailable' ? 'selected' : ''}>My number is not available right now</option>
-          <option value="not-applicable" ${v.hpcnaStatus === 'not-applicable' ? 'selected' : ''}>Not applicable to me</option></select>
-        <span class="hint">If you choose either option, staff will review your record before any certificate is issued.</span></div>
-      <div class="two">${f('phone', 'Mobile number', `<input type="tel" id="${id('phone')}" name="phone" autocomplete="tel" inputmode="tel" placeholder="081 123 4567" value="${esc(v.phone)}">`)}
-      ${f('email', opts.staff ? 'Email address' : 'Email address (required)', `<input type="email" id="${id('email')}" name="email" autocomplete="email" value="${esc(v.email)}">`, opts.staff ? '' : 'Your booking confirmation is emailed to you.')}</div>
+      <div class="stack-s"><p class="hint name-hint">${opts.staff ? 'Name as it should appear on the certificate.' : 'First name and surname: as you want them on your certificate.'}</p>
+      <div class="two">${f('firstName', 'First name', `<input type="text" id="${id('firstName')}" name="firstName" autocomplete="given-name" autocapitalize="words" value="${esc(v.firstName)}" required>`)}
+      ${f('lastName', 'Surname', `<input type="text" id="${id('lastName')}" name="lastName" autocomplete="family-name" autocapitalize="words" value="${esc(v.lastName)}" required>`)}</div></div>
+      ${f('profession', 'Profession', `<select id="${id('profession')}" name="profession" data-change="profession-toggle" required><option value="">Choose…</option>${C.PROFESSIONS.map(p => `<option ${v.profession === p ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>`)}
+      ${f('professionOther', 'Which profession?', `<input type="text" id="${id('professionOther')}" name="professionOther" value="${esc(v.professionOther)}">`, '', `data-when="other" ${v.profession === 'Other' ? '' : 'hidden'}`)}
+      <div class="two">${f('phone', `Mobile number <span class="opt" data-phone-opt ${phoneOptional ? '' : 'hidden'}>(optional)</span>`, `<input type="tel" id="${id('phone')}" name="phone" autocomplete="tel" inputmode="tel" placeholder="081 123 4567" value="${esc(v.phone)}">`)}
+      ${f('email', `Email address${opts.staff ? ' ' + opt : ''}`, `<input type="email" id="${id('email')}" name="email" autocomplete="email" inputmode="email" value="${esc(v.email)}" ${opts.staff ? '' : 'required'}>`, opts.staff ? '' : (emailOn() ? 'Your confirmation and booking link are emailed here.' : 'Needed for your booking confirmation and certificate.'))}</div>
       ${opts.staff ? `<label class="check"><input type="checkbox" id="${id('noEmail')}" name="noEmail" ${v.noEmail ? 'checked' : ''}><span>No email: paper or walk-in registration (the attendee has no email address)</span></label>` : ''}
-      ${er.contact ? `<div class="err" role="alert" style="color:var(--bad);font-weight:700">${esc(er.contact)}</div>` : (opts.staff ? '<p class="hint muted small" style="margin-top:-10px">Give at least one: a mobile number or an email address.</p>' : '')}
-      <div class="field ${er.channel ? 'invalid' : ''}"><span class="lbl">How should we contact you?</span><div class="choice-row">
-        ${Object.entries(C.CHANNELS).map(([k, l]) => `<label class="choice"><input type="radio" name="channel" id="${id('ch-' + k)}" value="${k}" ${v.channel === k ? 'checked' : ''}><span>${l}</span></label>`).join('')}
-      </div>${er.channel ? `<span class="err">${esc(er.channel)}</span>` : ''}</div>
-      <div class="field ${er.consentEvent ? 'invalid' : ''}"><label class="check"><input type="checkbox" id="${id('consentEvent')}" name="consentEvent" ${v.consentEvent ? 'checked' : ''}>
-        <span>${opts.staff ? 'The attendee agreed to receive messages about this CPD event (booking, reminders, evaluation and certificate).' : 'I agree to receive messages about this CPD event: booking confirmation, reminders, the evaluation and my certificate. <b>(Required)</b>'}</span></label>
+      ${er.contact ? `<div class="err" role="alert" style="color:var(--bad);font-weight:700">${esc(er.contact)}</div>` : ''}
+      <fieldset class="field ${er.channel ? 'invalid' : ''}"><legend class="lbl">Preferred channel for reminders</legend><div class="choice-row">
+        ${channels.map(([k, l]) => `<label class="choice"><input type="radio" name="channel" id="${id('ch-' + k)}" value="${k}" data-change="channel-toggle" ${v.channel === k ? 'checked' : ''}><span>${l}</span></label>`).join('')}
+      </div>${er.channel ? `<span class="err">${esc(er.channel)}</span>` : ''}</fieldset>
+      <div class="field ${er.hpcna ? 'invalid' : ''}"><label for="${id('hpcna')}">HPCNA registration number</label>
+        <span class="hint">Printed on your certificate.</span>
+        <input type="text" id="${id('hpcna')}" name="hpcna" value="${esc(v.hpcna)}" autocapitalize="characters" autocomplete="off" ${later ? 'disabled hidden' : ''} data-when="hpcna-now">
+        ${er.hpcna ? `<span class="err">${esc(er.hpcna)}</span>` : ''}
+        <label class="check check-quiet"><input type="checkbox" id="${id('hpcnaLater')}" name="hpcnaLater" data-change="hpcna-later" ${later ? 'checked' : ''}><span>I’ll provide this later</span></label>
+        <div class="choice-row later-why" data-when="hpcna-later" ${later ? '' : 'hidden'} role="radiogroup" aria-label="Why is the number not given?">
+          <label class="choice"><input type="radio" name="hpcnaReason" id="${id('hpcnaReason-unavailable')}" value="unavailable" ${v.hpcnaStatus !== 'not-applicable' ? 'checked' : ''}><span>Not available right now</span></label>
+          <label class="choice"><input type="radio" name="hpcnaReason" id="${id('hpcnaReason-na')}" value="not-applicable" ${v.hpcnaStatus === 'not-applicable' ? 'checked' : ''}><span>Not applicable to me</span></label>
+        </div>
+        <span class="hint" data-when="hpcna-later" ${later ? '' : 'hidden'}>Staff will check this with you before any certificate is issued.</span></div>
+      <div class="field ${er.consentEvent ? 'invalid' : ''}"><label class="check"><input type="checkbox" id="${id('consentEvent')}" name="consentEvent" ${v.consentEvent ? 'checked' : ''} required>
+        <span>${opts.staff ? 'The attendee agrees to receive messages about this event, including booking updates, reminders, evaluation and their certificate.' : 'I agree to receive messages about this event, including booking updates, reminders, evaluation and my certificate.'}</span></label>
         ${er.consentEvent ? `<span class="err">${esc(er.consentEvent)}</span>` : ''}</div>
-      <label class="check"><input type="checkbox" id="${id('consentMarketing')}" name="consentMarketing" ${v.consentMarketing ? 'checked' : ''}>
-        <span>${opts.staff ? 'Optional: the attendee wants news about future WAP Medical Supplies events and offers.' : `Optional: send me news about future ${esc(E().provider)} events and offers. You can say no and still attend.`}</span></label>`;
+      <label class="check check-quiet small"><input type="checkbox" id="${id('consentMarketing')}" name="consentMarketing" ${v.consentMarketing ? 'checked' : ''}>
+        <span>${opts.staff ? 'Optional: the attendee wants news about future WAP Medical Supplies events.' : `Optional: send me news about future ${esc(E().provider)} events. Not needed to book.`}</span></label>`;
   }
   function readAttendee(form) {
     const fd = new FormData(form), g = k => (fd.get(k) || '').toString();
-    return { firstName: g('firstName'), lastName: g('lastName'), profession: g('profession'), professionOther: g('professionOther'), hpcnaStatus: g('hpcnaStatus') || 'provided',
-      hpcna: g('hpcna'), phone: g('phone'), email: g('email'), channel: g('channel'), consentEvent: fd.get('consentEvent') === 'on', consentMarketing: fd.get('consentMarketing') === 'on', website: g('website'), noEmail: fd.get('noEmail') === 'on' };
+    const later = fd.get('hpcnaLater') === 'on';
+    return { firstName: g('firstName'), lastName: g('lastName'), profession: g('profession'), professionOther: g('profession') === 'Other' ? g('professionOther') : '',
+      hpcnaStatus: later ? (g('hpcnaReason') === 'not-applicable' ? 'not-applicable' : 'unavailable') : 'provided',
+      hpcna: later ? '' : g('hpcna'), phone: g('phone'), email: g('email'), channel: g('channel'), consentEvent: fd.get('consentEvent') === 'on', consentMarketing: fd.get('consentMarketing') === 'on', website: g('website'), noEmail: fd.get('noEmail') === 'on' };
   }
 
   function vRsvp() {
-    const ps = pubSummary(), t = T();
-    if (!ps.open) return { title: 'RSVP', html: `<div class="narrow panel stack"><h1>Online RSVPs are closed</h1><p>Online RSVPs closed on ${F(t.rsvpClose)}. Please contact us: ${contactsHtml()}. Staff can still register you if a place remains.</p><a class="btn" href="#home">Back to event details</a></div>` };
+    const ps = pubSummary(), t = T(), e = E();
+    const summary = `<p class="rsvp-event"><b>${esc(e.topic)}</b> · ${keyFacts(e, t).slice(0, 3).map(x => x[1]).join(' · ')}</p>`;
+    if (!ps.open) return { title: 'RSVP', html: `<div class="narrow panel stack"><h1>Online RSVPs are closed</h1>${summary}<p>Online RSVPs closed on ${F(t.rsvpClose)}. Please contact us: ${contactsHtml()}. Staff can still register you if a place remains.</p><a class="btn" href="#home">Back to event details</a></div>` };
     const fs = A.forms.rsvp || {};
-    return { title: 'RSVP', html: `<div class="narrow stack">
-      <div><a href="#home" class="small">← Event details</a><h1 style="margin-top:6px">${ps.status === 'open' ? 'RSVP' : 'Join the waiting list'}</h1>
-      <p class="muted" style="margin-top:6px">${esc(E().topic)} · ${esc(C.fmtDate(t.eventStart, tz()))} · ${esc(E().venueShort)}</p></div>
-      ${ps.status === 'open' ? `<div class="alert ok"><div><b>${ps.publicFree} of ${ps.publicCap} places left.</b> ${esc(E().publicWording)}</div></div>` : `<div class="alert warn"><div><b>All advance-booking places are taken.</b> You will join the waiting list in the order you apply.</div></div>`}
-      <form class="panel form" data-form="rsvp" novalidate><div class="hp" aria-hidden="true"><label for="a-website">Leave this field empty</label><input type="text" id="a-website" name="website" tabindex="-1" autocomplete="off"></div>${attendeeFields(fs)}
-        <button class="btn btn-primary btn-xl" type="submit">${ps.status === 'open' ? 'Book my place' : 'Join the waiting list'}</button>
-        <p class="small muted">We use your details to manage this event and issue your certificate. Your feedback answers are stored separately from your name.</p>
-      </form></div>`, after: () => { const el = document.getElementById('a-firstName'); if (el && !fs.errors) el.focus({ preventScroll: true }); } };
+    const fee = /^free$/i.test(String(e.fee || '').trim()) ? 'Free attendance' : esc(e.fee);
+    const line = ps.status === 'open'
+      ? `<p class="avail-line ok"><b>${ps.publicFree} ${ps.publicFree === 1 ? 'place' : 'places'} available</b> · ${fee}</p>`
+      : `<p class="avail-line warn"><b>All places are taken.</b> You will join the waiting list in the order you apply · ${fee}</p>`;
+    return { title: 'RSVP', html: `<div class="narrow stack rsvp">
+      <div><a href="#home" class="small back">← Event details</a><h1>${ps.status === 'open' ? 'Book your place' : 'Join the waiting list'}</h1>${summary}${line}</div>
+      <form class="panel form" data-form="rsvp" novalidate><div class="hp" aria-hidden="true"><label for="a-website">Leave this field empty</label><input type="text" id="a-website" name="website" tabindex="-1" autocomplete="off"></div>
+        <p class="small muted req-note">All fields are required unless marked optional.</p>
+        ${attendeeFields(fs)}
+        <button class="btn btn-book btn-xl" type="submit" data-label="${ps.status === 'open' ? 'Book my place' : 'Join the waiting list'}">${ps.status === 'open' ? 'Book my place' : 'Join the waiting list'}</button>
+        <p class="small muted">We use your details only to manage this event and issue your certificate. Evaluation answers are stored without your name.</p>
+      </form></div>`, after: () => { const el = document.getElementById('a-firstName'); if (el && !fs.errors && !fs.message) el.focus({ preventScroll: true }); } };
   }
 
   // ---------- PUBLIC: manage booking ----------
@@ -394,8 +454,19 @@
     const e = E(), t = T(), n = now(), cert = C.currentCert(S(), b), locked = !!cert;
     const isNew = A.flash === b.token; A.flash = null;
     let banner = '';
-    if (b.status === 'confirmed') banner = `<div class="alert ok"><div><b>Your place is confirmed.</b> Give your name at the registration desk from ${esc(e.programme[0].start)}.${b.pool === 'contingency' ? ' (Place allocated by the organiser.)' : ''}${isNew && emailOn() && b.email ? `<br>A confirmation email with this page’s link is on its way to <b>${esc(b.email)}</b>. Please also check your spam folder.` : ''}</div></div>`;
-    else if (b.status === 'waitlisted') { const pos = S().waitlistPos || (C.waitlist(S()).findIndex(x => x.id === b.id) + 1); banner = `<div class="alert warn"><div><b>${isNew ? 'You are on the waiting list.' : 'Waiting list'} — position ${pos}.</b> If a place becomes free, you will receive an offer with a time limit to accept.</div></div>`; }
+    const lk0 = links(b);
+    const keepLink = `<li><b>Keep this page.</b> Use it to view, change or cancel your booking. <button class="btn btn-s" data-act="copy" data-text="${esc(lk0.manage)}">Copy link</button></li>`;
+    const emailStep = emailOn() && b.email ? `<li><b>Check your email.</b> A confirmation with this page’s link is on its way to <b>${esc(b.email)}</b>. If it is not in your inbox within a few minutes, check your spam folder.</li>` : '';
+    if (b.status === 'confirmed' && isNew) banner = `<div class="alert ok success" role="status"><div><h2>✓ Your place is confirmed</h2>
+        <ol class="next">${emailStep}<li><b>On ${esc(C.fmtDate(t.eventStart, tz()))}</b>, give your name at the registration desk from ${esc(e.programme[0].start)}.</li>${keepLink}</ol></div></div>`;
+    else if (b.status === 'confirmed') banner = `<div class="alert ok"><div><b>Your place is confirmed.</b> Give your name at the registration desk from ${esc(e.programme[0].start)}.${b.pool === 'contingency' ? ' (Place allocated by the organiser.)' : ''}</div></div>`;
+    else if (b.status === 'waitlisted') {
+      const pos = S().waitlistPos || (C.waitlist(S()).findIndex(x => x.id === b.id) + 1);
+      banner = isNew ? `<div class="alert warn success" role="status"><div><h2>You are on the waiting list — position ${pos}</h2>
+        <p>All advance places are taken, so this is <b>not yet a confirmed place</b>. Reference <b class="mono">${esc(b.ref)}</b></p>
+        <ol class="next">${emailOn() && b.email ? `<li><b>Check your email</b> for confirmation that you are on the waiting list (<b>${esc(b.email)}</b>; check spam too).</li>` : ''}<li>If a place becomes free, we will ${emailOn() && b.email ? 'email you' : 'contact you'} with an offer and a time limit to accept.</li>${keepLink}</ol></div></div>`
+        : `<div class="alert warn"><div><b>Waiting list — position ${pos}.</b> If a place becomes free, you will receive an offer with a time limit to accept.</div></div>`;
+    }
     else if (b.status === 'offered') banner = `<div class="alert info"><div><b>A place is available for you.</b> Accept by <b>${F(b.offer.expiresAt)}</b> (Namibia time), or the place goes to the next person.</div>
         <div class="row"><button class="btn btn-ok" data-act="pub-accept" data-token="${esc(token)}">Accept the place</button><button class="btn" data-act="pub-decline" data-token="${esc(token)}">Decline</button></div></div>`;
     else banner = `<div class="alert bad"><div><b>${C.STATUS_LABEL[b.status]}.</b> ${b.status === 'released' ? 'Your place was released because you had not arrived after the presentation started. Please speak to the registration desk.' : 'This booking is no longer active. If this is a mistake, please contact us (details below).'}</div></div>`;
@@ -407,12 +478,12 @@
       ${b.status === 'confirmed' ? `<section class="panel ticket ticket-small"><div class="stack-s"><span class="eyebrow">Booking reference</span><span class="ref">${esc(b.ref)}</span>
         <p class="small muted">Optional: show this QR code at the desk to speed up check-in. Your name is enough.</p></div>${qrImg(C.qrPayload(b), 'qr qr-small')}</section>` : `<section class="panel"><span class="eyebrow">Reference</span> <span class="ref">${esc(b.ref)}</span></section>`}
       ${b.status === 'confirmed' ? `<section class="panel stack-s"><h2>Your progress</h2>${tracker(b)}
-        ${!b.feedback && b.status === 'confirmed' ? (fbOpen ? `<a class="btn btn-primary btn-xl" href="#f-${esc(token)}">Complete the evaluation</a>` : `<p class="small muted">The evaluation opens at ${F(t.feedbackOpen)}. NO FEEDBACK, NO CERTIFICATE.</p>`) : ''}
+        ${!b.feedback && b.status === 'confirmed' ? (fbOpen ? `<a class="btn btn-primary btn-xl" href="#f-${esc(token)}">Complete the evaluation</a>` : `<p class="small muted">The evaluation opens at ${F(t.feedbackOpen)}. ${CERT_NOTE}</p>`) : ''}
         ${cert ? `<a class="btn btn-ok btn-xl" href="#c-${esc(cert.token)}">View and download my certificate</a>` : ''}</section>` : ''}
       <section class="panel stack-s"><h2>Event</h2><dl class="kv"><dt>When</dt><dd>${esc(C.fmtDate(t.eventStart, tz()))}, ${esc(e.programme[0].start)}–${esc(e.programme[e.programme.length - 1].end)}</dd><dt>Where</dt><dd>${esc(e.venue)}, ${esc(e.venueAddress)}</dd><dt>Presenter</dt><dd>${esc(e.presenter)}</dd></dl></section>
       <section class="panel stack-s"><div class="row-between"><h2>Your details</h2>${!locked && ['confirmed', 'waitlisted', 'offered'].includes(b.status) ? `<button class="btn btn-s" data-act="pub-edit" data-token="${esc(token)}">Correct my details</button>` : ''}</div>
         <dl class="kv"><dt>Name</dt><dd>${nameOf(b)}</dd><dt>Profession</dt><dd>${profOf(b)}</dd><dt>HPCNA no.</dt><dd>${b.hpcna ? esc(b.hpcna) : '<span class="muted">Not given — staff will review</span>'}</dd>
-        <dt>Mobile</dt><dd>${esc(b.phone) || '—'}</dd><dt>Email</dt><dd>${esc(b.email) || '—'}</dd><dt>Contact by</dt><dd>${C.CHANNELS[b.channel]}</dd><dt>Future news</dt><dd>${b.consentMarketing ? 'Yes' : 'No'}</dd></dl>
+        <dt>Mobile</dt><dd>${esc(b.phone) || '—'}</dd><dt>Email</dt><dd>${esc(b.email) || '—'}</dd><dt>Reminders by</dt><dd>${C.CHANNELS[b.channel]}</dd><dt>Future news</dt><dd>${b.consentMarketing ? 'Yes' : 'No'}</dd></dl>
         ${locked ? '<p class="small muted">Your certificate has been issued, so details are locked. Please contact us for a correction (details below).</p>' : '<p class="small muted">Please make sure your name and registration number are correct. They appear on your certificate.</p>'}</section>
       <section class="panel stack-s"><h2>This link</h2><p class="small">This is your private booking link. Keep it safe and do not share it.</p>
         <div class="linkbox"><code>${esc(lk.manage)}</code><button class="btn btn-s" data-act="copy" data-text="${esc(lk.manage)}">Copy</button></div>
@@ -455,7 +526,7 @@
     if (n > t.feedbackClose) return { title: 'Evaluation', html: `<div class="narrow stack">${head}<div class="alert bad"><div>The online evaluation has closed. Please contact us: ${contactsHtml()}.</div></div></div>` };
     const fs = A.forms.fb || {};
     return { title: 'Evaluation', html: `<div class="narrow stack">${head}
-      <div class="alert warn"><div><b>NO FEEDBACK, NO CERTIFICATE.</b> Your answers are stored without your name. We only record that you have submitted.</div></div>
+      <div class="alert info"><div><b>${CERT_NOTE}</b> Your answers are stored without your name. We only record that you have submitted.</div></div>
       <form class="panel form" data-form="fb" data-token="${esc(token)}" novalidate>${feedbackFields(fs)}<button class="btn btn-primary btn-xl" type="submit">Submit evaluation</button></form></div>` };
   }
 
@@ -1286,8 +1357,14 @@
   }
 
   const FORMS = {
-    rsvp: (form) => { const v = readAttendee(form); A.forms.rsvp = { values: v };
-      run((st, c) => C.createBooking(st, c, null, v, { channel: 'public' }), null, { form: 'rsvp', render: false, then: b => { A.flash = b.token; go('m-' + b.token); } }); },
+    rsvp: async (form) => {
+      if (A.submitting) return;
+      const v = readAttendee(form); A.forms.rsvp = { values: v };
+      const btn = form.querySelector('button[type=submit]');
+      A.submitting = true; if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Booking…'; }
+      try { await run((st, c) => C.createBooking(st, c, null, v, { channel: 'public' }), null, { form: 'rsvp', render: false, then: b => { A.flash = b.token; window.scrollTo(0, 0); go('m-' + b.token); } }); }
+      finally { A.submitting = false; const b2 = document.querySelector('form[data-form=rsvp] button[type=submit]'); if (b2 && b2.disabled) { b2.disabled = false; b2.removeAttribute('aria-busy'); b2.textContent = b2.dataset.label || 'Book my place'; } }
+    },
     fb: (form) => { const v = readFeedback(form); A.forms.fb = { values: v }; run((st, c) => C.submitFeedback(st, c, form.dataset.token, v), 'Thank you. Your evaluation has been received.', { form: 'fb' }); },
     login: async (form) => { const fd = new FormData(form);
       if (isRemote()) {
@@ -1334,7 +1411,11 @@
   };
 
   const CHANGE = {
-    'hpcna-toggle': el => { const form = el.form; const inp = form.querySelector('[name=hpcna]'); if (inp) { inp.disabled = el.value !== 'provided'; if (inp.disabled) inp.value = ''; } },
+    'profession-toggle': el => { const box = el.form.querySelector('[data-when=other]'); if (box) box.hidden = el.value !== 'Other'; },
+    'channel-toggle': el => { const m = el.form.querySelector('[data-phone-opt]'); if (m) m.hidden = el.value !== 'email'; },
+    'hpcna-later': el => { const later = el.checked, form = el.form;
+      const inp = form.querySelector('[name=hpcna]'); if (inp) { inp.disabled = later; inp.hidden = later; }
+      form.querySelectorAll('[data-when=hpcna-later]').forEach(x => { x.hidden = !later; }); },
     'qr-photo': el => { if (el.files && el.files[0]) readQrPhoto(el.files[0]); el.value = ''; },
     'pfb-toggle': el => { A.forms.pfb = Object.assign(A.forms.pfb || {}, { withAnswers: el.checked }); renderModal(); },
     'sig-img': el => readImage(el, 300000, dataUrl => run((st, c) => C.updateSignatory(st, c, actor(), { name: E().signatory.name, title: E().signatory.title, image: dataUrl }), 'Signature image saved.')),

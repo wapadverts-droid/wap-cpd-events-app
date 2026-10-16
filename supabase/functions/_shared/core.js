@@ -988,7 +988,7 @@
     switch (type) {
       case 'confirmation':
         return { subject: `Booking confirmed: ${e.topic} CPD, ${fmtDate(t.eventStart, tz)}`,
-          body: `Dear ${name},\n\nYour place is confirmed for the CPD activity "${e.topic}".\n\nBooking reference: ${b.ref}\nDate: ${when}\nVenue: ${where}\nArrival and registration from ${e.programme[0].start}.\n\nGive your name at the registration desk. View or change your booking here:\n${L.manage || ''}\n\nCertificates need confirmed completion and a completed evaluation: NO FEEDBACK, NO CERTIFICATE.${sign}` };
+          body: `Dear ${name},\n\nYour place is confirmed for the CPD activity "${e.topic}".\n\nBooking reference: ${b.ref}\nDate: ${when}\nVenue: ${where}\nArrival and registration from ${e.programme[0].start}.\n\nGive your name at the registration desk. View or change your booking here:\n${L.manage || ''}\n\nTo receive your certificate, attend the full session and complete the evaluation. CPD points are subject to HPCNA approval of the activity.${sign}` };
       case 'waitlist':
         return { subject: `Waiting list: ${e.topic} CPD`,
           body: `Dear ${name},\n\nAll advance-booking places are taken, so you are on the waiting list (reference ${b.ref}). If a place becomes free we will send you an offer with a time limit to accept.\n\nManage your booking:\n${L.manage || ''}${sign}` };
@@ -1000,7 +1000,7 @@
           body: `Dear ${name},\n\nA reminder that "${e.topic}" takes place on ${when} at ${where}. Registration opens at ${e.programme[0].start}.\n\nYour reference: ${b.ref}. Can no longer attend? Please cancel so someone on the waiting list can take your place:\n${L.manage || ''}${sign}` };
       case 'feedback':
         return { subject: `Evaluation: ${e.topic} CPD`,
-          body: `Dear ${name},\n\nThank you for attending. Please complete the short evaluation now:\n${L.feedback || ''}\n\nNO FEEDBACK, NO CERTIFICATE.${sign}` };
+          body: `Dear ${name},\n\nThank you for attending. Please complete the short evaluation now:\n${L.feedback || ''}\n\nYour certificate is issued once you have attended the full session and completed the evaluation.${sign}` };
       case 'certificate':
         return { subject: `Your CPD certificate: ${e.topic}`,
           body: `Dear ${name},\n\nYour certificate of attendance for "${e.topic}" is ready. Download it from your private link:\n${L.certificate || ''}\n\nPlease keep this link private.${sign}` };

@@ -63,7 +63,7 @@ try:
         # device 1: attendee RSVPs
         c1, a = new_page(browser)
         a.goto('http://app.test/'); a.wait_for_selector('.status-card')
-        ok('shared database is the default; RSVPs open with 50 of 50', re.search(r'50\s+of 50 places left', a.inner_text('.status-card')), a.inner_text('.status-card'))
+        ok('shared database is the default; RSVPs open with 50 of 50', re.search(r'50\s+of 50 places (?:left|available)', a.inner_text('.status-card')), a.inner_text('.status-card'))
         ok('live: no test banner or labels', 'TEST DATABASE' not in a.inner_text('.topbar') and a.locator('.modebar').count() == 0)
         a.screenshot(path=str(SHOTS / 'r-home.png'))
         a.click('text=RSVP to secure your place'); a.wait_for_selector('form[data-form=rsvp]')
@@ -75,7 +75,7 @@ try:
         a.click('form[data-form=rsvp] button[type=submit]'); a.wait_for_timeout(300)
         ok('email is required online', 'Your booking confirmation is emailed' in a.inner_text('form[data-form=rsvp]') and a.locator('.invalid #a-email').count() == 1)
         fill_rsvp(a, 1); a.wait_for_selector('.ref', timeout=15000)
-        ok('booking page says the confirmation email is on its way', 'confirmation email' in a.inner_text('.alert.ok') and 'tester1@example.com' in a.inner_text('.alert.ok'))
+        ok('booking page says the confirmation email is on its way', 'confirmation with this page' in a.inner_text('.alert.ok') and 'tester1@example.com' in a.inner_text('.alert.ok'))
         box = json.loads(urllib.request.urlopen(f'http://127.0.0.1:{PORT}/__outbox').read())
         ok('confirmation email sent with the private link', len(box) == 1 and box[0]['to'] == 'tester1@example.com' and '#m-' in box[0]['body'] and 'Booking confirmed' in box[0]['subject'], box)
         ok('RSVP saved to shared database, booking page with ref and QR', 'Your place is confirmed' in a.inner_text('main') and a.locator('img.qr').count() == 1)
@@ -85,7 +85,7 @@ try:
         # device 2: another person sees the place taken and the private link works there too
         c2, b = new_page(browser)
         b.goto('http://app.test/'); b.wait_for_selector('.status-card')
-        ok('second device sees 49 of 50', re.search(r'49\s+of 50 places left', b.inner_text('.status-card')), b.inner_text('.status-card'))
+        ok('second device sees 49 of 50', re.search(r'49\s+of 50 places (?:left|available)', b.inner_text('.status-card')), b.inner_text('.status-card'))
         b.goto(manage); b.wait_for_selector('.ref', timeout=15000)
         ok('private booking link works on another device', b.inner_text('.ref') == ref)
         ok('attendee page shows only this booking', b.evaluate('window.__wapcpd.A.state.bookings.length') == 1 and b.evaluate('window.__wapcpd.A.state.staff.length') == 0)
@@ -117,7 +117,7 @@ try:
 
         # device 1 updates without reload after refresh
         a.goto('http://app.test/#home'); a.wait_for_selector('.status-card'); a.evaluate('window.__wapcpd.refresh()'); a.wait_for_timeout(500); a.evaluate('window.location.hash = "#rsvp"'); a.wait_for_selector('form[data-form=rsvp]')
-        ok('first device now sees 48 places (the PA booking)', '48 of 50' in a.inner_text('main'), a.inner_text('main')[:300])
+        ok('first device now sees 48 places (the PA booking)', '48 places available' in a.inner_text('main'), a.inner_text('main')[:300])
 
         # administrator
         b.click('[data-act=logout]'); b.wait_for_selector('.status-card', timeout=15000)
