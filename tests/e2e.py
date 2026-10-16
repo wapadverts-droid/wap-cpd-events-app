@@ -94,7 +94,7 @@ with sync_playwright() as p:
     ok('RSVP 3 goes to waiting list position 1', 'waiting list' in pg.inner_text('main').lower() and 'position 1' in pg.inner_text('main'))
     wl_url = pg.url
     # duplicate
-    pg.goto('http://app.test/#rsvp'); pg.wait_for_selector('#a-firstName'); fill_rsvp(pg, 1, first='Ehtest1', last='Demo-Browser1'); pg.wait_for_selector('.ref')
+    pg.goto('http://app.test/#rsvp'); pg.wait_for_selector('#a-firstName'); fill_rsvp(pg, 4, first='Ehtest1', last='Demo-Browser1'); pg.wait_for_selector('.ref')
 
     # PA permissions
     login(pg, 'Demo Reception (PA) — PA / Reception', '2222')

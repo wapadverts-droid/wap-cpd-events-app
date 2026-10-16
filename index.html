@@ -628,6 +628,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
     v.phoneIntl = phoneOk ? p.intl : '';
     const mailOk = !!v.email && emailOk(v.email);
     if (v.email && !mailOk) errors.email = 'Enter a valid email address.';
+    else if (!v.email && opts && opts.requireEmail) errors.email = (opts.staff ? 'Enter the attendee’s email address, or tick “No email”.' : 'Enter your email address. Your booking confirmation is emailed to you.');
     if (!phoneOk && !mailOk && !errors.phone && !errors.email) errors.contact = 'Enter at least one way to reach you: a mobile number or an email address.';
     if (!CHANNELS[v.channel]) errors.channel = 'Choose how we should contact you.';
     else if ((v.channel === 'whatsapp' || v.channel === 'sms') && !phoneOk && !errors.phone) errors.channel = `${CHANNELS[v.channel]} needs a mobile number.`;
@@ -676,9 +677,14 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
       if (now >= t.rsvpClose) fail('rsvp_closed', `Online RSVPs closed at ${fmt(t.rsvpClose, state.event.timezone)}. Please contact us: ${contactText(state.event)}.`);
     }
     if (!isStaff && input && clean(input.website)) fail('spam', 'Your RSVP could not be accepted. Please try again, or contact us.');
-    const val = validateAttendee(input, { staff: isStaff });
+    const val = validateAttendee(input, { staff: isStaff, requireEmail: !isStaff || !(input && input.noEmail) });
     if (!val.ok) { const e = new RuleError('invalid', 'Please check the highlighted fields.'); e.errors = val.errors; throw e; }
     const v = val.value;
+    if (!isStaff && v.email) {
+      // one online booking per email address: the existing booking's link is sent again instead
+      const existing = state.bookings.find(x => LIVE_STATUSES.includes(x.status) && x.email === v.email);
+      if (existing) { const e = new RuleError('already_booked', 'You already have a booking with this email address.'); e.bookingId = existing.id; throw e; }
+    }
     const dups = findDuplicates(state, v, null);
     const c = capacity(state);
     let status, pool;
@@ -734,7 +740,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
     if (isLocked(state, b)) fail('cert_issued', 'A certificate has been issued. Ask the administrator for a controlled certificate correction.');
     if (['cancelled', 'declined', 'expired'].includes(b.status)) fail('inactive', 'This booking is no longer active.');
     const merged = Object.assign({}, b, changes, { consentEvent: true });
-    const val = validateAttendee(merged, { staff: who.kind === 'staff' });
+    const val = validateAttendee(merged, { staff: who.kind === 'staff', requireEmail: who.kind !== 'staff' });
     if (!val.ok) { const e = new RuleError('invalid', 'Please check the highlighted fields.'); e.errors = val.errors; throw e; }
     const v = val.value, diffs = [];
     for (const k of EDITABLE.concat(['phoneIntl'])) {
@@ -1294,14 +1300,62 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
       status: 'prepared', history: [{ status: 'prepared', at: ctx.now, by: who.name }] };
     state.messages.push(m);
     if (actor) audit(state, ctx, who, 'Message prepared', b.ref, `${type} · ${CHANNELS[channel]}`);
+    // automatic emails: confirmation, waiting list and offer go out by email when sending is connected
+    if (!actor && state.integration && state.integration.email && ['confirmation', 'waitlist', 'offer'].includes(type) && b.email) queueEmail(state, ctx, b, type, who.name);
     return m;
   }
-  const MSG_STATUS = { prepared: 'Prepared', 'manually-shared': 'Manually shared', sent: 'Sent', delivered: 'Delivery confirmed' };
+  function queueEmail(state, ctx, b, type, by) {
+    state.counters.msg++;
+    const m = { id: 'm' + state.counters.msg, bookingId: b.id, ref: b.ref, type, channel: 'email', to: b.email, createdAt: ctx.now, auto: true,
+      status: 'queued', history: [{ status: 'queued', at: ctx.now, by }] };
+    state.messages.push(m);
+    return m;
+  }
+  /* Staff: send a message (again) by automatic email. */
+  function queueEmailResend(state, ctx, actor, msgId) {
+    const s = need(state, actor, 'message.prepare');
+    if (!(state.integration && state.integration.email)) fail('no_integration', 'Automatic email is not connected.');
+    const m0 = state.messages.find(x => x.id === msgId);
+    if (!m0) fail('not_found', 'Message not found.');
+    const b = findBooking(state, m0.bookingId);
+    if (!b.email) fail('no_email', 'This attendee has no email address. Add one in their details first.');
+    if (m0.type === 'certificate' && !currentCert(state, b)) fail('state', 'No released certificate to send.');
+    const m = queueEmail(state, ctx, b, m0.type, s.name);
+    audit(state, ctx, whoStaff(s), 'Email queued', b.ref, `${m0.type} → ${b.email}`);
+    return m;
+  }
+  /* Server: after "you already have a booking", send that booking's link to its own email (at most every 10 minutes). */
+  function queueLinkResend(state, ctx, bookingId) {
+    const b = state.bookings.find(x => x.id === bookingId);
+    if (!b || !b.email || !(state.integration && state.integration.email)) return null;
+    if (b.lastLinkResend && ctx.now - b.lastLinkResend < 10 * MIN) return null;
+    b.lastLinkResend = ctx.now;
+    return queueEmail(state, ctx, b, b.status === 'waitlisted' ? 'waitlist' : (b.status === 'offered' ? 'offer' : 'confirmation'), 'System (repeat booking attempt)');
+  }
+  /* Server: claim queued emails for sending (prevents two servers sending the same email). */
+  function claimEmails(state, ctx, max) {
+    const out = [];
+    for (const m of state.messages) {
+      if (out.length >= (max || 20)) break;
+      if (m.channel !== 'email') continue;
+      if (m.status === 'queued' || (m.status === 'sending' && ctx.now - (m.claimedAt || 0) > 2 * MIN)) { m.status = 'sending'; m.claimedAt = ctx.now; out.push(m.id); }
+    }
+    return out;
+  }
+  function markEmailResult(state, ctx, msgId, ok, error) {
+    const m = state.messages.find(x => x.id === msgId);
+    if (!m) return null;
+    m.status = ok ? 'sent' : 'failed';
+    if (!ok) m.error = String(error || 'unknown error').slice(0, 200);
+    m.history.push({ status: m.status, at: ctx.now, by: 'Email (automatic)' + (ok ? '' : ': ' + m.error) });
+    return m;
+  }
+  const MSG_STATUS = { prepared: 'Prepared', 'manually-shared': 'Manually shared', queued: 'Email waiting to send', sending: 'Email sending', sent: 'Sent', failed: 'Email not sent', delivered: 'Delivery confirmed' };
   function setMessageStatus(state, ctx, actor, msgId, status) {
     const s = need(state, actor, 'message.status');
     const m = state.messages.find(x => x.id === msgId);
     if (!m) fail('not_found', 'Message not found.');
-    if (!MSG_STATUS[status]) fail('invalid', 'Unknown status.');
+    if (!MSG_STATUS[status] || ['queued', 'sending', 'failed'].includes(status)) fail('invalid', 'Unknown status.');
     if ((status === 'sent' || status === 'delivered') && !state.integration.live)
       fail('no_integration', 'Live sending is not connected in this prototype, so "Sent" and "Delivery confirmed" cannot be recorded. Use "Manually shared" after you send it yourself.');
     m.status = status;
@@ -1439,7 +1493,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
     flagException, resolveException, resolveDuplicate, resolveHpcna, markDetailsChecked,
     validateFeedback, submitFeedback, recordPaperFeedback, addPaperResponse, feedbackSummary,
     approvalComplete, blockers, certStatus, currentCert, releaseCertificate, releaseAllReady, correctCertificate, certByToken,
-    messageText, prepareMessage, setMessageStatus,
+    messageText, prepareMessage, setMessageStatus, queueEmailResend, queueLinkResend, claimEmails, markEmailResult,
     updateEvent, updateApproval, updateSignatory, addStaff, setStaffActive, resetPin, setLogo, setPresenterPhoto,
     stats, bookingByToken, findBooking, fullName, prng, HOUR, MIN, DAY
   };
@@ -1478,12 +1532,13 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
       used.add(f + l); i++;
       const prof = PROF[Math.floor(rand() * PROF.length)];
       const ch = rand() < 0.65 ? 'whatsapp' : 'email';
-      const hasEmail = ch === 'email' || rand() < 0.7;
+      const hasEmail = true; rand(); // online RSVPs require an email
+      const n = String(i).padStart(2, '0');
       out.push({
         firstName: f, lastName: l, profession: prof, hpcnaStatus: 'provided',
         hpcna: `DEMO-${PCODE[prof]}-${String(1000 + i * 37).slice(-4)}`,
         phone: `081 555 ${String(1000 + i * 13).slice(-4)}`,
-        email: hasEmail ? `${f.toLowerCase()}.${l.toLowerCase().replace('demo-', '')}@example.com` : '',
+        email: hasEmail ? `${f.toLowerCase()}.${l.toLowerCase().replace('demo-', '')}${n}@example.com` : '',
         channel: ch, consentEvent: true, consentMarketing: rand() < 0.4
       });
     }
@@ -1533,7 +1588,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
         const when = at(`2026-10-${String(day).padStart(2, '0')}`, `${String(8 + (i % 5) * 2).padStart(2, '0')}:15`);
         let extra = {};
         if (i === 9) extra = { hpcnaStatus: 'unavailable', hpcna: '' };
-        if (i === 30) extra = { email: people.slice(0, 20).find(x => x.email).email, channel: 'email', phone: '' }; // same email as an earlier booking
+        if (i === 30) extra = { phone: people[3].phone, firstName: people[3].firstName, lastName: people[3].lastName }; // same person as an earlier booking (name and phone)
         book(when, extra);
       }
       ctx.now = at('2026-10-10', '14:00');
@@ -1571,7 +1626,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
       // Event day
       ctx.now = at('2026-10-23', '09:00'); CPD.cancelBooking(state, ctx, null, null, { token: tok(B[33]), reason: 'Unwell' });
       ctx.now = at('2026-10-23', '12:05'); CPD.processExpiries(state, ctx);
-      const paper = book(at('2026-10-23', '17:40'), { channel: 'sms', email: '' }, { channel: 'staff', source: 'paper-form' });
+      const paper = book(at('2026-10-23', '17:40'), { channel: 'sms', email: '', noEmail: true }, { channel: 'staff', source: 'paper-form' });
       const walk = book(at('2026-10-23', '17:45'), {}, { channel: 'staff', source: 'staff-walkin' });
       ctx.now = at('2026-10-23', '17:50');
       CPD.allocateContingencyFor(state, ctx, adminS, W[0].id, 'Arrived in person after offer expired; contingency approved');
@@ -1589,7 +1644,7 @@ footer.foot { color: var(--muted); font-size: 0.82rem; text-align: center; paddi
       }
       // Two walk-ins after the event is full: they join the waiting list at the desk
       book(at('2026-10-23', '18:20'), {}, { channel: 'staff', source: 'staff-walkin' });
-      book(at('2026-10-23', '18:24'), { email: '', channel: 'sms' }, { channel: 'staff', source: 'staff-walkin' });
+      book(at('2026-10-23', '18:24'), { email: '', channel: 'sms', noEmail: true }, { channel: 'staff', source: 'staff-walkin' });
       const arrived = state.bookings.filter(b => b.arrival);
       // Early departures
       const e1 = arrived[6], e2 = arrived[17];
@@ -1980,7 +2035,7 @@ window.WAPCPD_CONFIG = {
     'releaseUnused', 'reinstate', 'recordArrival', 'undoArrival', 'confirmCompletion', 'recordEarlyDeparture', 'reviewEarlyDeparture',
     'undoCompletion', 'flagException', 'resolveException', 'resolveDuplicate', 'resolveHpcna', 'markDetailsChecked', 'submitFeedback',
     'recordPaperFeedback', 'addPaperResponse', 'releaseCertificate', 'releaseAllReady', 'correctCertificate', 'prepareMessage',
-    'setMessageStatus', 'updateEvent', 'updateApproval', 'updateSignatory', 'addStaff', 'setStaffActive', 'setLogo', 'setPresenterPhoto', 'resetPin', 'login', 'logout'];
+    'setMessageStatus', 'updateEvent', 'updateApproval', 'updateSignatory', 'addStaff', 'setStaffActive', 'setLogo', 'setPresenterPhoto', 'queueEmailResend', 'resetPin', 'login', 'logout'];
 
   function createAuth(cfg, storage) {
     const KEY = 'wapcpd:auth';
@@ -2183,7 +2238,7 @@ window.WAPCPD_CONFIG = {
       return { ok: true, result: r.result };
     } catch (e) {
       if (e && e.code) {
-        if (opts.form && e.errors) { A.forms[opts.form] = Object.assign(A.forms[opts.form] || {}, { errors: e.errors, message: e.message }); A.modal ? renderModal() : render(); focusError(); }
+        if (opts.form && (e.errors || ['already_booked', 'spam', 'rsvp_closed'].includes(e.code))) { A.forms[opts.form] = Object.assign(A.forms[opts.form] || {}, { errors: e.errors || {}, message: e.message }); A.modal ? renderModal() : render(); focusError(); }
         else if (A.modal && opts.modalError !== false) { A.modal.error = e.message; renderModal(); }
         else toast(e.message, 'bad');
         return { ok: false, error: e };
@@ -2240,6 +2295,7 @@ window.WAPCPD_CONFIG = {
   }
   const logo = () => E().logo || window.WAP_LOGO || '';
   const contactsHtml = sep => C.contactsOf(E()).map(c => [c.phone ? `<span class="mono" style="white-space:nowrap">${esc(c.phone)}</span>` : '', c.email ? `<span class="mono">${esc(c.email)}</span>` : ''].filter(Boolean).join(' · ')).join(sep || ', or ');
+  const emailOn = () => !!(isRemote() && A.state && A.state.integration && A.state.integration.email);
   const presenterPhoto = () => { const p = E().presenterPhoto; return p === 'none' ? '' : (p || window.WAP_PRESENTER || ''); };
   const nameOf = b => esc(b.firstName + ' ' + b.lastName);
   const profOf = b => esc(b.profession === 'Other' ? (b.professionOther || 'Other') : b.profession);
@@ -2423,8 +2479,9 @@ window.WAPCPD_CONFIG = {
           <option value="not-applicable" ${v.hpcnaStatus === 'not-applicable' ? 'selected' : ''}>Not applicable to me</option></select>
         <span class="hint">If you choose either option, staff will review your record before any certificate is issued.</span></div>
       <div class="two">${f('phone', 'Mobile number', `<input type="tel" id="${id('phone')}" name="phone" autocomplete="tel" inputmode="tel" placeholder="081 123 4567" value="${esc(v.phone)}">`)}
-      ${f('email', 'Email address', `<input type="email" id="${id('email')}" name="email" autocomplete="email" value="${esc(v.email)}">`)}</div>
-      ${er.contact ? `<div class="err" role="alert" style="color:var(--bad);font-weight:700">${esc(er.contact)}</div>` : '<p class="hint muted small" style="margin-top:-10px">Give at least one: a mobile number or an email address.</p>'}
+      ${f('email', opts.staff ? 'Email address' : 'Email address (required)', `<input type="email" id="${id('email')}" name="email" autocomplete="email" value="${esc(v.email)}">`, opts.staff ? '' : 'Your booking confirmation is emailed to you.')}</div>
+      ${opts.staff ? `<label class="check"><input type="checkbox" id="${id('noEmail')}" name="noEmail" ${v.noEmail ? 'checked' : ''}><span>No email: paper or walk-in registration (the attendee has no email address)</span></label>` : ''}
+      ${er.contact ? `<div class="err" role="alert" style="color:var(--bad);font-weight:700">${esc(er.contact)}</div>` : (opts.staff ? '<p class="hint muted small" style="margin-top:-10px">Give at least one: a mobile number or an email address.</p>' : '')}
       <div class="field ${er.channel ? 'invalid' : ''}"><span class="lbl">How should we contact you?</span><div class="choice-row">
         ${Object.entries(C.CHANNELS).map(([k, l]) => `<label class="choice"><input type="radio" name="channel" id="${id('ch-' + k)}" value="${k}" ${v.channel === k ? 'checked' : ''}><span>${l}</span></label>`).join('')}
       </div>${er.channel ? `<span class="err">${esc(er.channel)}</span>` : ''}</div>
@@ -2437,7 +2494,7 @@ window.WAPCPD_CONFIG = {
   function readAttendee(form) {
     const fd = new FormData(form), g = k => (fd.get(k) || '').toString();
     return { firstName: g('firstName'), lastName: g('lastName'), profession: g('profession'), professionOther: g('professionOther'), hpcnaStatus: g('hpcnaStatus') || 'provided',
-      hpcna: g('hpcna'), phone: g('phone'), email: g('email'), channel: g('channel'), consentEvent: fd.get('consentEvent') === 'on', consentMarketing: fd.get('consentMarketing') === 'on', website: g('website') };
+      hpcna: g('hpcna'), phone: g('phone'), email: g('email'), channel: g('channel'), consentEvent: fd.get('consentEvent') === 'on', consentMarketing: fd.get('consentMarketing') === 'on', website: g('website'), noEmail: fd.get('noEmail') === 'on' };
   }
 
   function vRsvp() {
@@ -2473,7 +2530,7 @@ window.WAPCPD_CONFIG = {
     const e = E(), t = T(), n = now(), cert = C.currentCert(S(), b), locked = !!cert;
     const isNew = A.flash === b.token; A.flash = null;
     let banner = '';
-    if (b.status === 'confirmed') banner = `<div class="alert ok"><div><b>Your place is confirmed.</b> Give your name at the registration desk from ${esc(e.programme[0].start)}.${b.pool === 'contingency' ? ' (Place allocated by the organiser.)' : ''}</div></div>`;
+    if (b.status === 'confirmed') banner = `<div class="alert ok"><div><b>Your place is confirmed.</b> Give your name at the registration desk from ${esc(e.programme[0].start)}.${b.pool === 'contingency' ? ' (Place allocated by the organiser.)' : ''}${isNew && emailOn() && b.email ? `<br>A confirmation email with this page’s link is on its way to <b>${esc(b.email)}</b>. Please also check your spam folder.` : ''}</div></div>`;
     else if (b.status === 'waitlisted') { const pos = S().waitlistPos || (C.waitlist(S()).findIndex(x => x.id === b.id) + 1); banner = `<div class="alert warn"><div><b>${isNew ? 'You are on the waiting list.' : 'Waiting list'} — position ${pos}.</b> If a place becomes free, you will receive an offer with a time limit to accept.</div></div>`; }
     else if (b.status === 'offered') banner = `<div class="alert info"><div><b>A place is available for you.</b> Accept by <b>${F(b.offer.expiresAt)}</b> (Namibia time), or the place goes to the next person.</div>
         <div class="row"><button class="btn btn-ok" data-act="pub-accept" data-token="${esc(token)}">Accept the place</button><button class="btn" data-act="pub-decline" data-token="${esc(token)}">Decline</button></div></div>`;
@@ -2831,7 +2888,7 @@ window.WAPCPD_CONFIG = {
       <section class="panel"><h2>History</h2>${hist.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr></thead><tbody>${hist.map(a => `<tr><td class="small tnum" style="white-space:nowrap">${F(a.at)}</td><td class="small">${esc(a.who.name)}</td><td>${esc(a.action)}</td><td class="small">${esc(a.detail)}</td></tr>`).join('')}</tbody></table></div>` : (S().restricted ? '<div class="empty">The history is visible to the administrator.</div>' : '<div class="empty">No history.</div>')}</section>` };
   }
   function msgRow(m, b) {
-    const pill = { prepared: 'p-info', 'manually-shared': 'p-ok', sent: 'p-ok', delivered: 'p-ok' }[m.status];
+    const pill = { prepared: 'p-info', 'manually-shared': 'p-ok', sent: 'p-ok', delivered: 'p-ok', queued: 'p-info', sending: 'p-info', failed: 'p-bad' }[m.status];
     return `<div class="alert" style="border-left-color:var(--line)"><div><b>${esc(m.type)}</b> · ${C.CHANNELS[m.channel]} · <span class="mono small">${esc(m.to || 'no address')}</span> · <span class="pill ${pill}">${C.MSG_STATUS[m.status]}</span><div class="small muted">${b ? '' : esc(m.ref) + ' · '}prepared ${F(m.createdAt)}</div></div>
       <button class="btn btn-s" data-act="msg-open" data-msg="${m.id}">Open</button></div>`;
   }
@@ -2845,7 +2902,8 @@ window.WAPCPD_CONFIG = {
     A.modal = { html: () => `<div class="modal-head"><div><div class="eyebrow">${esc(m.type)} · ${C.CHANNELS[m.channel]}</div><h2>Message to ${nameOf(b)}</h2></div><button class="btn btn-s" data-act="close-modal">Close</button></div>
       <dl class="kv"><dt>To</dt><dd class="mono">${esc(m.to || '— no address for this channel —')}</dd><dt>Status</dt><dd>${C.MSG_STATUS[m.status]}</dd></dl>
       ${m.channel === 'email' ? `<div class="msgtext"><b>Subject:</b> ${esc(txt.subject)}</div>` : ''}<div class="msgtext">${esc(txt.body)}</div>
-      <div class="row"><button class="btn btn-primary" data-act="copy" data-text="${esc(full)}">Copy message</button>
+      ${m.status === 'failed' ? `<div class="alert bad"><div><b>The automatic email was not sent.</b> ${esc(m.error || '')}</div></div>` : ''}
+      <div class="row">${emailOn() && b.email && can('message.prepare') ? `<button class="btn btn-ok" data-act="msg-email" data-msg="${m.id}">${m.channel === 'email' ? 'Send email again' : 'Send by email now'}</button>` : ''}<button class="btn btn-primary" data-act="copy" data-text="${esc(full)}">Copy message</button>
         ${wa ? `<a class="btn" href="${esc(wa)}" target="_blank" rel="noopener">Open in WhatsApp</a>` : ''}
         ${b.email ? `<a class="btn" href="mailto:${esc(b.email)}?subject=${encodeURIComponent(txt.subject)}&body=${encodeURIComponent(txt.body)}">Open email app</a>` : ''}</div>
       <p class="small muted">Opening WhatsApp or the email app does not send anything. After you have sent it yourself, mark it as manually shared.</p>
@@ -3083,7 +3141,8 @@ window.WAPCPD_CONFIG = {
     const counts = {}; for (const m of S().messages) counts[m.status] = (counts[m.status] || 0) + 1;
     const shown = list.slice(0, 80);
     return { title: 'Messages', html: `<div class="page-head"><div><h1>Messages</h1><p>${S().messages.length} prepared messages. ${counts.prepared || 0} still to share.</p></div></div>
-      <div class="alert info"><div><b>Nothing is sent automatically.</b> Messages are prepared with the attendee's private links. Copy them or open WhatsApp/email, send them yourself, then mark them “Manually shared”. “Sent” and “Delivery confirmed” need a live WhatsApp or email connection, which is not part of this prototype.</div></div>
+      ${emailOn() ? `<div class="alert info"><div><b>Emails are sent automatically</b> for booking confirmations, the waiting list and place offers (from the WAP Gmail account, up to 100 a day). Their status shows below: “Sent”, or “Email not sent” with the reason — open it to send again. WhatsApp messages are still prepared for you to send yourself; mark them “Manually shared” afterwards.</div></div>`
+        : `<div class="alert info"><div><b>Nothing is sent automatically${isRemote() ? ' yet' : ''}.</b> Messages are prepared with the attendee's private links. Copy them or open WhatsApp/email, send them yourself, then mark them “Manually shared”.${isRemote() ? ' Automatic email starts once the Google email script is connected.' : ''}</div></div>`}
       ${can('message.prepare') ? `<section class="panel stack-s"><h2>Prepare in bulk</h2><div class="row">
         <button class="btn" data-act="bulk-msg" data-type="reminder">Reminders to everyone booked</button>
         <button class="btn" data-act="bulk-msg" data-type="feedback">Evaluation requests (completed, no feedback)</button>
@@ -3307,6 +3366,7 @@ window.WAPCPD_CONFIG = {
     'edit': el => { const b = byId(el.dataset.id); A.forms.pedit = { values: Object.assign({}, b) }; openEdit(b, null); },
     'prep-msg': el => { const id = el.dataset.id, type = el.dataset.type || (document.getElementById('pm-type') || {}).value; run((st, c) => C.prepareMessage(st, c, actor(), id, type), 'Message prepared.', { then: m => setTimeout(() => openMessage(m.id), 0) }); },
     'msg-open': el => openMessage(el.dataset.msg),
+    'msg-email': el => run((st, c) => C.queueEmailResend(st, c, actor(), el.dataset.msg), m => `Email to ${m.to} is being sent.`, { then: () => setTimeout(() => refresh().then(render), 4000) }),
     'msg-status': el => run((st, c) => C.setMessageStatus(st, c, actor(), el.dataset.msg, el.dataset.status), 'Status updated.', { keepModal: true, then: m => setTimeout(() => openMessage(m.id), 0) }),
     'bulk-msg': el => { const type = el.dataset.type; run((st, c) => { let list = st.bookings.filter(b => b.status === 'confirmed'); if (type === 'feedback') list = list.filter(b => C.completed(b) && !b.feedback); if (type === 'certificate') list = list.filter(b => C.currentCert(st, b));
       if (!list.length) throw new C.RuleError('none', 'Nobody matches for this message.'); list.forEach(b => C.prepareMessage(st, c, actor(), b.id, type)); return list.length; }, k => `${k} message(s) prepared.`); },

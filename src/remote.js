@@ -17,7 +17,7 @@
     'releaseUnused', 'reinstate', 'recordArrival', 'undoArrival', 'confirmCompletion', 'recordEarlyDeparture', 'reviewEarlyDeparture',
     'undoCompletion', 'flagException', 'resolveException', 'resolveDuplicate', 'resolveHpcna', 'markDetailsChecked', 'submitFeedback',
     'recordPaperFeedback', 'addPaperResponse', 'releaseCertificate', 'releaseAllReady', 'correctCertificate', 'prepareMessage',
-    'setMessageStatus', 'updateEvent', 'updateApproval', 'updateSignatory', 'addStaff', 'setStaffActive', 'setLogo', 'setPresenterPhoto', 'resetPin', 'login', 'logout'];
+    'setMessageStatus', 'updateEvent', 'updateApproval', 'updateSignatory', 'addStaff', 'setStaffActive', 'setLogo', 'setPresenterPhoto', 'queueEmailResend', 'resetPin', 'login', 'logout'];
 
   function createAuth(cfg, storage) {
     const KEY = 'wapcpd:auth';

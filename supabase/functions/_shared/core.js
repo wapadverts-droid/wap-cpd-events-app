@@ -351,6 +351,7 @@
     v.phoneIntl = phoneOk ? p.intl : '';
     const mailOk = !!v.email && emailOk(v.email);
     if (v.email && !mailOk) errors.email = 'Enter a valid email address.';
+    else if (!v.email && opts && opts.requireEmail) errors.email = (opts.staff ? 'Enter the attendee’s email address, or tick “No email”.' : 'Enter your email address. Your booking confirmation is emailed to you.');
     if (!phoneOk && !mailOk && !errors.phone && !errors.email) errors.contact = 'Enter at least one way to reach you: a mobile number or an email address.';
     if (!CHANNELS[v.channel]) errors.channel = 'Choose how we should contact you.';
     else if ((v.channel === 'whatsapp' || v.channel === 'sms') && !phoneOk && !errors.phone) errors.channel = `${CHANNELS[v.channel]} needs a mobile number.`;
@@ -399,9 +400,14 @@
       if (now >= t.rsvpClose) fail('rsvp_closed', `Online RSVPs closed at ${fmt(t.rsvpClose, state.event.timezone)}. Please contact us: ${contactText(state.event)}.`);
     }
     if (!isStaff && input && clean(input.website)) fail('spam', 'Your RSVP could not be accepted. Please try again, or contact us.');
-    const val = validateAttendee(input, { staff: isStaff });
+    const val = validateAttendee(input, { staff: isStaff, requireEmail: !isStaff || !(input && input.noEmail) });
     if (!val.ok) { const e = new RuleError('invalid', 'Please check the highlighted fields.'); e.errors = val.errors; throw e; }
     const v = val.value;
+    if (!isStaff && v.email) {
+      // one online booking per email address: the existing booking's link is sent again instead
+      const existing = state.bookings.find(x => LIVE_STATUSES.includes(x.status) && x.email === v.email);
+      if (existing) { const e = new RuleError('already_booked', 'You already have a booking with this email address.'); e.bookingId = existing.id; throw e; }
+    }
     const dups = findDuplicates(state, v, null);
     const c = capacity(state);
     let status, pool;
@@ -457,7 +463,7 @@
     if (isLocked(state, b)) fail('cert_issued', 'A certificate has been issued. Ask the administrator for a controlled certificate correction.');
     if (['cancelled', 'declined', 'expired'].includes(b.status)) fail('inactive', 'This booking is no longer active.');
     const merged = Object.assign({}, b, changes, { consentEvent: true });
-    const val = validateAttendee(merged, { staff: who.kind === 'staff' });
+    const val = validateAttendee(merged, { staff: who.kind === 'staff', requireEmail: who.kind !== 'staff' });
     if (!val.ok) { const e = new RuleError('invalid', 'Please check the highlighted fields.'); e.errors = val.errors; throw e; }
     const v = val.value, diffs = [];
     for (const k of EDITABLE.concat(['phoneIntl'])) {
@@ -1017,14 +1023,62 @@
       status: 'prepared', history: [{ status: 'prepared', at: ctx.now, by: who.name }] };
     state.messages.push(m);
     if (actor) audit(state, ctx, who, 'Message prepared', b.ref, `${type} · ${CHANNELS[channel]}`);
+    // automatic emails: confirmation, waiting list and offer go out by email when sending is connected
+    if (!actor && state.integration && state.integration.email && ['confirmation', 'waitlist', 'offer'].includes(type) && b.email) queueEmail(state, ctx, b, type, who.name);
     return m;
   }
-  const MSG_STATUS = { prepared: 'Prepared', 'manually-shared': 'Manually shared', sent: 'Sent', delivered: 'Delivery confirmed' };
+  function queueEmail(state, ctx, b, type, by) {
+    state.counters.msg++;
+    const m = { id: 'm' + state.counters.msg, bookingId: b.id, ref: b.ref, type, channel: 'email', to: b.email, createdAt: ctx.now, auto: true,
+      status: 'queued', history: [{ status: 'queued', at: ctx.now, by }] };
+    state.messages.push(m);
+    return m;
+  }
+  /* Staff: send a message (again) by automatic email. */
+  function queueEmailResend(state, ctx, actor, msgId) {
+    const s = need(state, actor, 'message.prepare');
+    if (!(state.integration && state.integration.email)) fail('no_integration', 'Automatic email is not connected.');
+    const m0 = state.messages.find(x => x.id === msgId);
+    if (!m0) fail('not_found', 'Message not found.');
+    const b = findBooking(state, m0.bookingId);
+    if (!b.email) fail('no_email', 'This attendee has no email address. Add one in their details first.');
+    if (m0.type === 'certificate' && !currentCert(state, b)) fail('state', 'No released certificate to send.');
+    const m = queueEmail(state, ctx, b, m0.type, s.name);
+    audit(state, ctx, whoStaff(s), 'Email queued', b.ref, `${m0.type} → ${b.email}`);
+    return m;
+  }
+  /* Server: after "you already have a booking", send that booking's link to its own email (at most every 10 minutes). */
+  function queueLinkResend(state, ctx, bookingId) {
+    const b = state.bookings.find(x => x.id === bookingId);
+    if (!b || !b.email || !(state.integration && state.integration.email)) return null;
+    if (b.lastLinkResend && ctx.now - b.lastLinkResend < 10 * MIN) return null;
+    b.lastLinkResend = ctx.now;
+    return queueEmail(state, ctx, b, b.status === 'waitlisted' ? 'waitlist' : (b.status === 'offered' ? 'offer' : 'confirmation'), 'System (repeat booking attempt)');
+  }
+  /* Server: claim queued emails for sending (prevents two servers sending the same email). */
+  function claimEmails(state, ctx, max) {
+    const out = [];
+    for (const m of state.messages) {
+      if (out.length >= (max || 20)) break;
+      if (m.channel !== 'email') continue;
+      if (m.status === 'queued' || (m.status === 'sending' && ctx.now - (m.claimedAt || 0) > 2 * MIN)) { m.status = 'sending'; m.claimedAt = ctx.now; out.push(m.id); }
+    }
+    return out;
+  }
+  function markEmailResult(state, ctx, msgId, ok, error) {
+    const m = state.messages.find(x => x.id === msgId);
+    if (!m) return null;
+    m.status = ok ? 'sent' : 'failed';
+    if (!ok) m.error = String(error || 'unknown error').slice(0, 200);
+    m.history.push({ status: m.status, at: ctx.now, by: 'Email (automatic)' + (ok ? '' : ': ' + m.error) });
+    return m;
+  }
+  const MSG_STATUS = { prepared: 'Prepared', 'manually-shared': 'Manually shared', queued: 'Email waiting to send', sending: 'Email sending', sent: 'Sent', failed: 'Email not sent', delivered: 'Delivery confirmed' };
   function setMessageStatus(state, ctx, actor, msgId, status) {
     const s = need(state, actor, 'message.status');
     const m = state.messages.find(x => x.id === msgId);
     if (!m) fail('not_found', 'Message not found.');
-    if (!MSG_STATUS[status]) fail('invalid', 'Unknown status.');
+    if (!MSG_STATUS[status] || ['queued', 'sending', 'failed'].includes(status)) fail('invalid', 'Unknown status.');
     if ((status === 'sent' || status === 'delivered') && !state.integration.live)
       fail('no_integration', 'Live sending is not connected in this prototype, so "Sent" and "Delivery confirmed" cannot be recorded. Use "Manually shared" after you send it yourself.');
     m.status = status;
@@ -1162,7 +1216,7 @@
     flagException, resolveException, resolveDuplicate, resolveHpcna, markDetailsChecked,
     validateFeedback, submitFeedback, recordPaperFeedback, addPaperResponse, feedbackSummary,
     approvalComplete, blockers, certStatus, currentCert, releaseCertificate, releaseAllReady, correctCertificate, certByToken,
-    messageText, prepareMessage, setMessageStatus,
+    messageText, prepareMessage, setMessageStatus, queueEmailResend, queueLinkResend, claimEmails, markEmailResult,
     updateEvent, updateApproval, updateSignatory, addStaff, setStaffActive, resetPin, setLogo, setPresenterPhoto,
     stats, bookingByToken, findBooking, fullName, prng, HOUR, MIN, DAY
   };

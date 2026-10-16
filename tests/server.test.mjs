@@ -64,13 +64,13 @@ test('first use creates the tables, staff list and an empty event; public view h
 
 test('public RSVP: booking saved centrally, attendee sees only their own booking', async () => {
   const h = await fresh();
-  const r1 = await book(h, person({ email: 'dup@example.com' }));
+  const r1 = await book(h, person({ phone: '081 777 0001' }));
   assert.equal(r1.ok, true, JSON.stringify(r1.error));
   const b1 = r1.results[0];
   assert.equal(b1.status, 'confirmed');
   assert.equal(r1.view.viewKind, 'attendee');
   assert.equal(r1.view.bookings.length, 1);
-  const r2 = await book(h, person({ email: 'dup@example.com' }));
+  const r2 = await book(h, person({ phone: '081 777 0001' }));
   const b2 = r2.results[0];
   assert.deepEqual(b2.flags.duplicate.matches, [], 'other attendees are not revealed through duplicate flags');
   // another device sees the place taken
@@ -231,5 +231,82 @@ test('spam protection: an RSVP with the hidden field filled in is refused and no
   assert.equal(ok.ok, true);
   // staff registrations are not affected
   const s = await act(h, [{ fn: 'createBooking', args: [ME, person({ website: 'x' }), { channel: 'staff', source: 'staff-phone' }] }], PA);
+  assert.equal(s.ok, true, JSON.stringify(s.error));
+});
+
+async function freshEmail(outbox, opts) {
+  await fresh();
+  return createHandler({ sql, CPD, getUserEmail, dataset: 'live', initialStaff: INITIAL_STAFF, clock: () => clockNow, siteUrl: 'https://site.example/app/',
+    sendEmail: async m => { if (opts && opts.fail) return { ok: false, error: 'Service invoked too many times for one day: email.' }; outbox.push(m); return { ok: true }; } });
+}
+
+test('automatic email: confirmation sent to the attendee with their private link; status recorded', async () => {
+  const outbox = [];
+  const h = await freshEmail(outbox);
+  const r = await book(h, person({ email: 'att1@example.com' }));
+  assert.equal(r.ok, true, JSON.stringify(r.error));
+  assert.equal(outbox.length, 1);
+  assert.equal(outbox[0].to, 'att1@example.com');
+  assert.match(outbox[0].subject, /Booking confirmed/);
+  assert.ok(outbox[0].body.includes('https://site.example/app/#m-' + r.results[0].token), 'private link in the email');
+  assert.ok(outbox[0].body.includes(r.results[0].ref));
+  assert.ok(outbox[0].body.includes('+264 81 220 9167'));
+  const pa = await view(h, PA);
+  const m = pa.view.messages.find(x => x.channel === 'email');
+  assert.equal(m.status, 'sent');
+  assert.equal(r.view.integration.email, true, 'site knows email is connected');
+});
+
+test('automatic email: waiting list and offer emails; failed sends are marked and can be resent by staff', async () => {
+  const outbox = [];
+  const h = await freshEmail(outbox);
+  for (let i = 0; i < 50; i++) await book(h);
+  const w = (await book(h, person({ email: 'waiting@example.com' }))).results[0];
+  assert.equal(outbox.at(-1).to, 'waiting@example.com'); assert.match(outbox.at(-1).subject, /Waiting list/);
+  const first = (await view(h, PA)).view.bookings[0];
+  await act(h, [{ fn: 'cancelBooking', args: [ME, first.id, { reason: 'x' }] }, { fn: 'makeOffer', args: [ME, null] }], PA);
+  assert.match(outbox.at(-1).subject, /A place is available/); assert.equal(outbox.at(-1).to, 'waiting@example.com');
+  assert.match(outbox.at(-1).body, /accept or decline by/);
+  // failure
+  const out2 = [];
+  const hf = await freshEmail(out2, { fail: true });
+  const b = (await book(hf, person({ email: 'x@example.com' }))).results[0];
+  const pv = await view(hf, PA);
+  const fm = pv.view.messages.find(x => x.channel === 'email');
+  assert.equal(fm.status, 'failed'); assert.match(fm.error, /too many times/);
+  // staff resend through a working sender
+  const h2 = createHandler({ sql, CPD, getUserEmail, dataset: 'live', initialStaff: INITIAL_STAFF, clock: () => clockNow, siteUrl: 'https://site.example/app/', sendEmail: async m => { out2.push(m); return { ok: true }; } });
+  const rs = await act(h2, [{ fn: 'queueEmailResend', args: [ME, fm.id] }], PA);
+  assert.equal(rs.ok, true, JSON.stringify(rs.error));
+  assert.equal(out2.length, 1); assert.equal(out2[0].to, 'x@example.com');
+  const pub = await act(h2, [{ fn: 'queueEmailResend', args: [ME, fm.id] }]);
+  assert.equal(pub.error.code, 'auth', 'public cannot trigger emails');
+  assert.ok(b);
+});
+
+test('repeat online booking with the same email: refused, link emailed to that address only, at most every 10 minutes', async () => {
+  const outbox = [];
+  const h = await freshEmail(outbox);
+  const a = (await book(h, person({ email: 'same@example.com' }))).results[0];
+  assert.equal(outbox.length, 1);
+  const again = await book(h, person({ email: 'SAME@example.com', firstName: 'Someone', lastName: 'Else' }));
+  assert.equal(again.ok, false); assert.equal(again.error.code, 'already_booked');
+  assert.match(again.error.message, /emailed your booking link/);
+  assert.ok(!JSON.stringify(again).includes(a.token) && !JSON.stringify(again).includes(a.ref), 'nothing about the existing booking is revealed');
+  assert.equal(outbox.length, 2); assert.equal(outbox[1].to, 'same@example.com'); assert.ok(outbox[1].body.includes(a.token));
+  await book(h, person({ email: 'same@example.com' }));
+  assert.equal(outbox.length, 2, 'no second resend within 10 minutes');
+  assert.equal((await view(h, PA)).view.bookings.length, 1);
+  // without email connected, the message says to use the confirmation link
+  const h0 = await fresh(); await book(h0, person({ email: 'q@example.com' }));
+  const r0 = await book(h0, person({ email: 'q@example.com' }));
+  assert.match(r0.error.message, /contact us/);
+});
+
+test('email required online; staff can register someone with no email', async () => {
+  const h = await fresh();
+  const r = await book(h, person({ email: '' }));
+  assert.equal(r.error.code, 'invalid'); assert.ok(r.error.errors.email);
+  const s = await act(h, [{ fn: 'createBooking', args: [ME, person({ email: '', channel: 'sms', noEmail: true }), { channel: 'staff', source: 'staff-walkin' }] }], PA);
   assert.equal(s.ok, true, JSON.stringify(s.error));
 });

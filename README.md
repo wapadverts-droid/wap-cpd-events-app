@@ -10,7 +10,7 @@ Website: https://wapadverts-droid.github.io/wap-cpd-events-app/
 
 Real RSVPs are taken at the website above. Bookings from every phone go to one shared database (Supabase project `wap-cpd-test`, now serving the live record), so staff see all bookings and the 50-place limit holds for everyone. Earlier test bookings are archived in the same database (record `main`) and are not shown.
 
-Known limits: messages are prepared for staff to send by hand (no automatic WhatsApp or email); QR scanning reads a photo rather than a live camera feed; HPCNA requirements for certificate content have not been checked against current official guidance. Data is stored in Supabase's European region (accepted by WAP).
+Automatic emails (confirmation, waiting list, place offers) are sent through the WAP Gmail account via Google Apps Script (`server/email-script.gs`; Supabase secrets `EMAIL_SCRIPT_URL` and `EMAIL_SCRIPT_KEY`; up to 100 recipients a day). Known limits: WhatsApp messages are prepared for staff to send by hand; QR scanning reads a photo rather than a live camera feed; HPCNA requirements for certificate content have not been checked against current official guidance. Data is stored in Supabase's European region (accepted by WAP).
 
 Future changes are rehearsed in practice mode (staff: Settings → Practice mode) before being uploaded.
 

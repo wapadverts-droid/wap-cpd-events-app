@@ -17,7 +17,9 @@ const postgres = createRequire(path.join(LIB, 'x.js'))('postgres');
 const sql = postgres(process.env.PGURL || 'postgres://postgres@localhost:54329/postgres', { max: 10, onnotice: () => {} });
 
 const PASSWORDS = { 'wapadverts@gmail.com': 'admin-pass', 'executive@rcempiremedical.com': 'pa-pass', 'stranger@example.com': 'x-pass' };
-const handler = createHandler({ sql, CPD, dataset: process.env.DATASET || 'live', initialStaff: INITIAL_STAFF, getUserEmail: async t => (t.startsWith('tok:') ? t.slice(4) : null) });
+const outbox = [];
+const handler = createHandler({ sql, CPD, dataset: process.env.DATASET || 'live', initialStaff: INITIAL_STAFF, getUserEmail: async t => (t.startsWith('tok:') ? t.slice(4) : null),
+  siteUrl: 'http://app.test/', sendEmail: process.env.EMAIL === '0' ? undefined : async m => { outbox.push(m); return { ok: true }; } });
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 
 function send(res, status, body) { res.writeHead(status, Object.assign({ 'Content-Type': 'application/json' }, CORS)); res.end(JSON.stringify(body)); }
@@ -27,7 +29,8 @@ http.createServer(async (req, res) => {
   const body = Buffer.concat(chunks).toString();
   const url = new URL(req.url, 'http://local');
   if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end(); }
-  if (url.pathname === '/__reset') { await sql.unsafe('drop table if exists public.app_state, public.app_state_history'); return send(res, 200, { ok: true }); }
+  if (url.pathname === '/__outbox') return send(res, 200, outbox);
+  if (url.pathname === '/__reset') { outbox.length = 0; await sql.unsafe('drop table if exists public.app_state, public.app_state_history'); return send(res, 200, { ok: true }); }
   if (url.pathname === '/auth/v1/token') {
     const d = JSON.parse(body || '{}');
     if (url.searchParams.get('grant_type') === 'password') {

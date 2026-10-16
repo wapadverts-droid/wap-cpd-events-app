@@ -102,7 +102,7 @@
       return { ok: true, result: r.result };
     } catch (e) {
       if (e && e.code) {
-        if (opts.form && e.errors) { A.forms[opts.form] = Object.assign(A.forms[opts.form] || {}, { errors: e.errors, message: e.message }); A.modal ? renderModal() : render(); focusError(); }
+        if (opts.form && (e.errors || ['already_booked', 'spam', 'rsvp_closed'].includes(e.code))) { A.forms[opts.form] = Object.assign(A.forms[opts.form] || {}, { errors: e.errors || {}, message: e.message }); A.modal ? renderModal() : render(); focusError(); }
         else if (A.modal && opts.modalError !== false) { A.modal.error = e.message; renderModal(); }
         else toast(e.message, 'bad');
         return { ok: false, error: e };
@@ -159,6 +159,7 @@
   }
   const logo = () => E().logo || window.WAP_LOGO || '';
   const contactsHtml = sep => C.contactsOf(E()).map(c => [c.phone ? `<span class="mono" style="white-space:nowrap">${esc(c.phone)}</span>` : '', c.email ? `<span class="mono">${esc(c.email)}</span>` : ''].filter(Boolean).join(' · ')).join(sep || ', or ');
+  const emailOn = () => !!(isRemote() && A.state && A.state.integration && A.state.integration.email);
   const presenterPhoto = () => { const p = E().presenterPhoto; return p === 'none' ? '' : (p || window.WAP_PRESENTER || ''); };
   const nameOf = b => esc(b.firstName + ' ' + b.lastName);
   const profOf = b => esc(b.profession === 'Other' ? (b.professionOther || 'Other') : b.profession);
@@ -342,8 +343,9 @@
           <option value="not-applicable" ${v.hpcnaStatus === 'not-applicable' ? 'selected' : ''}>Not applicable to me</option></select>
         <span class="hint">If you choose either option, staff will review your record before any certificate is issued.</span></div>
       <div class="two">${f('phone', 'Mobile number', `<input type="tel" id="${id('phone')}" name="phone" autocomplete="tel" inputmode="tel" placeholder="081 123 4567" value="${esc(v.phone)}">`)}
-      ${f('email', 'Email address', `<input type="email" id="${id('email')}" name="email" autocomplete="email" value="${esc(v.email)}">`)}</div>
-      ${er.contact ? `<div class="err" role="alert" style="color:var(--bad);font-weight:700">${esc(er.contact)}</div>` : '<p class="hint muted small" style="margin-top:-10px">Give at least one: a mobile number or an email address.</p>'}
+      ${f('email', opts.staff ? 'Email address' : 'Email address (required)', `<input type="email" id="${id('email')}" name="email" autocomplete="email" value="${esc(v.email)}">`, opts.staff ? '' : 'Your booking confirmation is emailed to you.')}</div>
+      ${opts.staff ? `<label class="check"><input type="checkbox" id="${id('noEmail')}" name="noEmail" ${v.noEmail ? 'checked' : ''}><span>No email: paper or walk-in registration (the attendee has no email address)</span></label>` : ''}
+      ${er.contact ? `<div class="err" role="alert" style="color:var(--bad);font-weight:700">${esc(er.contact)}</div>` : (opts.staff ? '<p class="hint muted small" style="margin-top:-10px">Give at least one: a mobile number or an email address.</p>' : '')}
       <div class="field ${er.channel ? 'invalid' : ''}"><span class="lbl">How should we contact you?</span><div class="choice-row">
         ${Object.entries(C.CHANNELS).map(([k, l]) => `<label class="choice"><input type="radio" name="channel" id="${id('ch-' + k)}" value="${k}" ${v.channel === k ? 'checked' : ''}><span>${l}</span></label>`).join('')}
       </div>${er.channel ? `<span class="err">${esc(er.channel)}</span>` : ''}</div>
@@ -356,7 +358,7 @@
   function readAttendee(form) {
     const fd = new FormData(form), g = k => (fd.get(k) || '').toString();
     return { firstName: g('firstName'), lastName: g('lastName'), profession: g('profession'), professionOther: g('professionOther'), hpcnaStatus: g('hpcnaStatus') || 'provided',
-      hpcna: g('hpcna'), phone: g('phone'), email: g('email'), channel: g('channel'), consentEvent: fd.get('consentEvent') === 'on', consentMarketing: fd.get('consentMarketing') === 'on', website: g('website') };
+      hpcna: g('hpcna'), phone: g('phone'), email: g('email'), channel: g('channel'), consentEvent: fd.get('consentEvent') === 'on', consentMarketing: fd.get('consentMarketing') === 'on', website: g('website'), noEmail: fd.get('noEmail') === 'on' };
   }
 
   function vRsvp() {
@@ -392,7 +394,7 @@
     const e = E(), t = T(), n = now(), cert = C.currentCert(S(), b), locked = !!cert;
     const isNew = A.flash === b.token; A.flash = null;
     let banner = '';
-    if (b.status === 'confirmed') banner = `<div class="alert ok"><div><b>Your place is confirmed.</b> Give your name at the registration desk from ${esc(e.programme[0].start)}.${b.pool === 'contingency' ? ' (Place allocated by the organiser.)' : ''}</div></div>`;
+    if (b.status === 'confirmed') banner = `<div class="alert ok"><div><b>Your place is confirmed.</b> Give your name at the registration desk from ${esc(e.programme[0].start)}.${b.pool === 'contingency' ? ' (Place allocated by the organiser.)' : ''}${isNew && emailOn() && b.email ? `<br>A confirmation email with this page’s link is on its way to <b>${esc(b.email)}</b>. Please also check your spam folder.` : ''}</div></div>`;
     else if (b.status === 'waitlisted') { const pos = S().waitlistPos || (C.waitlist(S()).findIndex(x => x.id === b.id) + 1); banner = `<div class="alert warn"><div><b>${isNew ? 'You are on the waiting list.' : 'Waiting list'} — position ${pos}.</b> If a place becomes free, you will receive an offer with a time limit to accept.</div></div>`; }
     else if (b.status === 'offered') banner = `<div class="alert info"><div><b>A place is available for you.</b> Accept by <b>${F(b.offer.expiresAt)}</b> (Namibia time), or the place goes to the next person.</div>
         <div class="row"><button class="btn btn-ok" data-act="pub-accept" data-token="${esc(token)}">Accept the place</button><button class="btn" data-act="pub-decline" data-token="${esc(token)}">Decline</button></div></div>`;
@@ -750,7 +752,7 @@
       <section class="panel"><h2>History</h2>${hist.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr></thead><tbody>${hist.map(a => `<tr><td class="small tnum" style="white-space:nowrap">${F(a.at)}</td><td class="small">${esc(a.who.name)}</td><td>${esc(a.action)}</td><td class="small">${esc(a.detail)}</td></tr>`).join('')}</tbody></table></div>` : (S().restricted ? '<div class="empty">The history is visible to the administrator.</div>' : '<div class="empty">No history.</div>')}</section>` };
   }
   function msgRow(m, b) {
-    const pill = { prepared: 'p-info', 'manually-shared': 'p-ok', sent: 'p-ok', delivered: 'p-ok' }[m.status];
+    const pill = { prepared: 'p-info', 'manually-shared': 'p-ok', sent: 'p-ok', delivered: 'p-ok', queued: 'p-info', sending: 'p-info', failed: 'p-bad' }[m.status];
     return `<div class="alert" style="border-left-color:var(--line)"><div><b>${esc(m.type)}</b> · ${C.CHANNELS[m.channel]} · <span class="mono small">${esc(m.to || 'no address')}</span> · <span class="pill ${pill}">${C.MSG_STATUS[m.status]}</span><div class="small muted">${b ? '' : esc(m.ref) + ' · '}prepared ${F(m.createdAt)}</div></div>
       <button class="btn btn-s" data-act="msg-open" data-msg="${m.id}">Open</button></div>`;
   }
@@ -764,7 +766,8 @@
     A.modal = { html: () => `<div class="modal-head"><div><div class="eyebrow">${esc(m.type)} · ${C.CHANNELS[m.channel]}</div><h2>Message to ${nameOf(b)}</h2></div><button class="btn btn-s" data-act="close-modal">Close</button></div>
       <dl class="kv"><dt>To</dt><dd class="mono">${esc(m.to || '— no address for this channel —')}</dd><dt>Status</dt><dd>${C.MSG_STATUS[m.status]}</dd></dl>
       ${m.channel === 'email' ? `<div class="msgtext"><b>Subject:</b> ${esc(txt.subject)}</div>` : ''}<div class="msgtext">${esc(txt.body)}</div>
-      <div class="row"><button class="btn btn-primary" data-act="copy" data-text="${esc(full)}">Copy message</button>
+      ${m.status === 'failed' ? `<div class="alert bad"><div><b>The automatic email was not sent.</b> ${esc(m.error || '')}</div></div>` : ''}
+      <div class="row">${emailOn() && b.email && can('message.prepare') ? `<button class="btn btn-ok" data-act="msg-email" data-msg="${m.id}">${m.channel === 'email' ? 'Send email again' : 'Send by email now'}</button>` : ''}<button class="btn btn-primary" data-act="copy" data-text="${esc(full)}">Copy message</button>
         ${wa ? `<a class="btn" href="${esc(wa)}" target="_blank" rel="noopener">Open in WhatsApp</a>` : ''}
         ${b.email ? `<a class="btn" href="mailto:${esc(b.email)}?subject=${encodeURIComponent(txt.subject)}&body=${encodeURIComponent(txt.body)}">Open email app</a>` : ''}</div>
       <p class="small muted">Opening WhatsApp or the email app does not send anything. After you have sent it yourself, mark it as manually shared.</p>
@@ -1002,7 +1005,8 @@
     const counts = {}; for (const m of S().messages) counts[m.status] = (counts[m.status] || 0) + 1;
     const shown = list.slice(0, 80);
     return { title: 'Messages', html: `<div class="page-head"><div><h1>Messages</h1><p>${S().messages.length} prepared messages. ${counts.prepared || 0} still to share.</p></div></div>
-      <div class="alert info"><div><b>Nothing is sent automatically.</b> Messages are prepared with the attendee's private links. Copy them or open WhatsApp/email, send them yourself, then mark them “Manually shared”. “Sent” and “Delivery confirmed” need a live WhatsApp or email connection, which is not part of this prototype.</div></div>
+      ${emailOn() ? `<div class="alert info"><div><b>Emails are sent automatically</b> for booking confirmations, the waiting list and place offers (from the WAP Gmail account, up to 100 a day). Their status shows below: “Sent”, or “Email not sent” with the reason — open it to send again. WhatsApp messages are still prepared for you to send yourself; mark them “Manually shared” afterwards.</div></div>`
+        : `<div class="alert info"><div><b>Nothing is sent automatically${isRemote() ? ' yet' : ''}.</b> Messages are prepared with the attendee's private links. Copy them or open WhatsApp/email, send them yourself, then mark them “Manually shared”.${isRemote() ? ' Automatic email starts once the Google email script is connected.' : ''}</div></div>`}
       ${can('message.prepare') ? `<section class="panel stack-s"><h2>Prepare in bulk</h2><div class="row">
         <button class="btn" data-act="bulk-msg" data-type="reminder">Reminders to everyone booked</button>
         <button class="btn" data-act="bulk-msg" data-type="feedback">Evaluation requests (completed, no feedback)</button>
@@ -1226,6 +1230,7 @@
     'edit': el => { const b = byId(el.dataset.id); A.forms.pedit = { values: Object.assign({}, b) }; openEdit(b, null); },
     'prep-msg': el => { const id = el.dataset.id, type = el.dataset.type || (document.getElementById('pm-type') || {}).value; run((st, c) => C.prepareMessage(st, c, actor(), id, type), 'Message prepared.', { then: m => setTimeout(() => openMessage(m.id), 0) }); },
     'msg-open': el => openMessage(el.dataset.msg),
+    'msg-email': el => run((st, c) => C.queueEmailResend(st, c, actor(), el.dataset.msg), m => `Email to ${m.to} is being sent.`, { then: () => setTimeout(() => refresh().then(render), 4000) }),
     'msg-status': el => run((st, c) => C.setMessageStatus(st, c, actor(), el.dataset.msg, el.dataset.status), 'Status updated.', { keepModal: true, then: m => setTimeout(() => openMessage(m.id), 0) }),
     'bulk-msg': el => { const type = el.dataset.type; run((st, c) => { let list = st.bookings.filter(b => b.status === 'confirmed'); if (type === 'feedback') list = list.filter(b => C.completed(b) && !b.feedback); if (type === 'certificate') list = list.filter(b => C.currentCert(st, b));
       if (!list.length) throw new C.RuleError('none', 'Nobody matches for this message.'); list.forEach(b => C.prepareMessage(st, c, actor(), b.id, type)); return list.length; }, k => `${k} message(s) prepared.`); },

@@ -12,6 +12,7 @@
 - **16 Oct 2026 (c)** — Presenter photo: small square photo (64 px) beside the presenter's name in Event details on the landing page, below the RSVP box. Supplied photo cropped from the image provided by the organiser (assets/presenter.jpg). Administrator can replace it, restore it or hide it in Settings.
 - **16 Oct 2026 (d)** — Contact details: the organiser's name and number are no longer shown. Attendees see two contacts everywhere (event page, booking page, footer, closed/invalid-link messages, prepared messages): +264 81 220 9167 · Executive@rcempiremedical.com, or +264 81 695 1252 · marketing@wappharm.com. Editable in Settings as two contact lines. Older saved data without contacts shows these defaults.
 - **16 Oct 2026 (e) — LIVE.** Server serves a fresh live record (`app_state` id `live`, mode live: no test banner, no demo watermark); test bookings archived in record `main`. Same project, website address and staff logins. Hidden spam-trap field on the public RSVP form (filled-in submissions refused by the server; staff registrations unaffected). Staff can open practice mode from Settings. Deploy check now confirms the server answers with live data. WAP accepted EU data storage; PA testing by Sarah waived by the administrator.
+- **16 Oct 2026 (f)** — Automatic email through the organiser's Gmail (Google Apps Script `server/email-script.gs`, free, 100 recipients/day). Server queues and sends confirmation, waiting-list and offer emails after each change (claimed in a locked transaction so none is sent twice); statuses Sent / Email not sent shown in Messages; staff can send again. Email required for online RSVPs and attendee self-edits; staff registrations have a "No email: paper or walk-in" tick box. A second online RSVP with an email that already has an active booking is refused and that booking's link is emailed to its own address (at most every 10 minutes); nothing about the existing booking is revealed. Supabase secrets: EMAIL_SCRIPT_URL, EMAIL_SCRIPT_KEY. Without them, no emails are sent and the site says so.
 
 ## Decisions taken
 - Pending offers hold places. Offers go in queue order; the administrator may skip the queue with a recorded reason. Offers last 24 h, 2 h on the event day, and are capped at event start (18:00). Windows under 30 minutes are refused and handled at the desk as late cases.
@@ -35,14 +36,14 @@
 
 ## Known limits before live use
 - Practice mode data lives on one device only (by design).
-- No live WhatsApp or email sending; no offline mode.
+- No automatic WhatsApp; email limited to 100 recipients a day (free Gmail); no offline mode.
 - QR scanning reads a photo (camera capture via file input), not a live camera feed.
 - HPCNA requirements (certificate content, register submission within one month per Form 3) have not been checked against current official guidance.
 - The public page is visible to anyone with the link. It holds no attendee data (that stays in each visitor's browser), and asks search engines not to index it.
 
-## Tests (16 Oct 2026, go-live build)
-- 22 Node rules tests pass, including 70 simultaneous registrations for 50 places with no overbooking.
-- 10 server tests against a local Postgres (incl. live record separation and spam trap): tables and staff created on first use, public view has no personal data, attendees see only their own booking, staff-only actions refused for the public and for forged staff claims, PA vs administrator permissions, all-or-nothing saves, server-side deadline and offer expiry, 70 simultaneous bookings for 50 places (exactly 50 booked, 20 waiting, none lost), anonymous feedback, hourly snapshot.
-- 32 browser checks on the shared database (live configuration) (local stand-in): RSVP on one device seen on another, private links across devices, staff email sign-in, wrong password, PA registration seen by others, PA restrictions, admin audit and staff management, non-staff account, attendee cancellation, practice mode separation, phone layouts.
-- Server program also started under Deno (the Supabase runtime) against local Postgres.
+## Tests (16 Oct 2026, email build)
+- 24 Node rules tests pass, including 70 simultaneous registrations for 50 places with no overbooking.
+- 14 server tests against a local Postgres (incl. live record separation, spam trap, email sending/failure/resend, repeat-email booking): tables and staff created on first use, public view has no personal data, attendees see only their own booking, staff-only actions refused for the public and for forged staff claims, PA vs administrator permissions, all-or-nothing saves, server-side deadline and offer expiry, 70 simultaneous bookings for 50 places (exactly 50 booked, 20 waiting, none lost), anonymous feedback, hourly snapshot.
+- 38 browser checks on the shared database (live configuration, incl. email required, confirmation email, repeat booking refused) (local stand-in): RSVP on one device seen on another, private links across devices, staff email sign-in, wrong password, PA registration seen by others, PA restrictions, admin audit and staff management, non-staff account, attendee cancellation, practice mode separation, phone layouts.
+- Server program also started under Deno (the Supabase runtime) against local Postgres, sending through a mock Google script (incl. redirect).
 - 64 practice-mode browser checks on desktop and phone sizes: RSVP, waiting list and offers, PA permission refusals, duplicates, check-in, completion, QR photo check-out, early-departure review, certificate blocking and release, PDF and CSV downloads, persistence after reload, separate real-data mode, no horizontal scrolling on phone.

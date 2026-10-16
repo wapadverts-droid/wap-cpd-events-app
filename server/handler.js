@@ -26,7 +26,7 @@ const STAFF_FNS = new Set([
   'releaseUnused', 'reinstate', 'recordArrival', 'undoArrival', 'confirmCompletion', 'recordEarlyDeparture', 'reviewEarlyDeparture',
   'undoCompletion', 'flagException', 'resolveException', 'resolveDuplicate', 'resolveHpcna', 'markDetailsChecked', 'submitFeedback',
   'recordPaperFeedback', 'addPaperResponse', 'releaseCertificate', 'releaseAllReady', 'correctCertificate', 'prepareMessage',
-  'setMessageStatus', 'updateEvent', 'updateApproval', 'updateSignatory', 'addStaff', 'setStaffActive', 'setLogo', 'setPresenterPhoto'
+  'setMessageStatus', 'updateEvent', 'updateApproval', 'updateSignatory', 'addStaff', 'setStaffActive', 'setLogo', 'setPresenterPhoto', 'queueEmailResend'
 ]);
 const MAX_CALLS = 120;
 const MAX_BODY = 2_000_000;
@@ -65,6 +65,9 @@ export const SCHEMA_SQL = [
  *  getUserEmail   async (accessToken, apikey) => email | null   (verifies a staff sign-in)
  *  dataset        'test' | 'live'
  *  initialStaff   [{ name, email, role }]  (administrators first)
+ *  sendEmail      async ({ to, subject, body }) => { ok, error }   (optional: automatic email)
+ *  siteUrl        public website address, used for the links in emails
+ *  background     (promise) => void  (optional: finish sending after the reply)
  *  clock          () => ms   (optional, for tests)
  *  random         () => [0,1) (optional)
  */
@@ -75,6 +78,8 @@ export function createHandler(deps) {
   const ROW_ID = dataset === 'live' ? 'live' : 'main';
   const clock = deps.clock || (() => Date.now());
   const random = deps.random || cryptoRandom;
+  const emailOn = typeof deps.sendEmail === 'function';
+  const siteUrl = (deps.siteUrl || '').replace(/#.*$/, '');
   let ready = null;
 
   function json(body, status) {
@@ -196,6 +201,7 @@ export function createHandler(deps) {
       const [row] = await tx`select state, rev from public.app_state where id = ${ROW_ID} for update`;
       const state = row.state;
       state.rev = row.rev;
+      state.integration = Object.assign({}, state.integration, { email: emailOn });
       const out = await fn(state);
       if (out && out.save) {
         const rev = row.rev + 1;
@@ -207,6 +213,34 @@ export function createHandler(deps) {
       }
       return out;
     });
+  }
+
+  function linksFor(state, b) {
+    const cert = CPD.currentCert(state, b);
+    return { manage: siteUrl + '#m-' + b.token, feedback: siteUrl + '#f-' + b.token, certificate: cert ? siteUrl + '#c-' + cert.token : '' };
+  }
+  const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms))]);
+  async function deliverEmails() {
+    if (!emailOn) return;
+    const claimed = await withLockedState(st => { const ids = CPD.claimEmails(st, { now: clock(), rand: random }, 20); return { save: ids.length > 0, ids, st }; });
+    if (!claimed.ids.length) return;
+    const results = [];
+    for (const id of claimed.ids) {
+      const m = claimed.st.messages.find(x => x.id === id);
+      const b = claimed.st.bookings.find(x => x.id === m.bookingId);
+      let r;
+      try {
+        const t = CPD.messageText(claimed.st, b, m.type, linksFor(claimed.st, b));
+        r = await withTimeout(deps.sendEmail({ to: m.to, subject: t.subject, body: t.body }), 20000);
+      } catch (e) { r = { ok: false, error: e && e.message }; }
+      results.push({ id, ok: !!(r && r.ok), error: r && r.error });
+    }
+    await withLockedState(st => { for (const r of results) CPD.markEmailResult(st, { now: clock(), rand: random }, r.id, r.ok, r.error); return { save: true }; });
+  }
+  function afterReply(p) {
+    const safe = p.catch(e => console.error('email delivery', e));
+    if (deps.background) { deps.background(safe); return Promise.resolve(); }
+    return safe;
   }
 
   async function identify(req, body) {
@@ -266,7 +300,17 @@ export function createHandler(deps) {
             throw e;
           }
         });
-        if (out.error) return json(ruleError(out.error));
+        if (out.error) {
+          if (out.error.code === 'already_booked' && out.error.bookingId && emailOn) {
+            await withLockedState(st => { const m = CPD.queueLinkResend(st, { now, rand: random }, out.error.bookingId); return { save: !!m }; });
+            await afterReply(deliverEmails());
+            out.error.message += ' We have emailed your booking link to that address again (it may take a few minutes; please also check your spam folder).';
+          } else if (out.error.code === 'already_booked') {
+            out.error.message += ' Please use the link in your confirmation, or contact us.';
+          }
+          return json(ruleError(out.error));
+        }
+        await afterReply(deliverEmails());
         // after a public booking, show the attendee their own booking
         let tk = token;
         if (!out.who.staff && !tk) { const b = out.results.find(r => r && r.token && r.ref); if (b) tk = { kind: 'booking', value: b.token }; }

@@ -19,6 +19,20 @@ async function getUserEmail(accessToken: string, apikey: string): Promise<string
   return typeof u?.email === 'string' ? u.email : null;
 }
 
+// Automatic email: sent through the organiser's Google Apps Script (Gmail).
+// Secrets (Supabase → Edge Functions → Secrets): EMAIL_SCRIPT_URL and EMAIL_SCRIPT_KEY.
+const EMAIL_URL = Deno.env.get('EMAIL_SCRIPT_URL') ?? '';
+const EMAIL_KEY = Deno.env.get('EMAIL_SCRIPT_KEY') ?? '';
+async function sendEmail(msg: { to: string; subject: string; body: string }) {
+  const r = await fetch(EMAIL_URL, {
+    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ key: EMAIL_KEY, to: msg.to, subject: msg.subject, body: msg.body }), redirect: 'follow'
+  });
+  const text = await r.text();
+  try { const d = JSON.parse(text); return { ok: !!d.ok, error: d.error || null }; }
+  catch { return { ok: false, error: `Unexpected reply from the email script (HTTP ${r.status})` }; }
+}
+
 const handler = createHandler({
   sql,
   // deno-lint-ignore no-explicit-any
@@ -26,7 +40,11 @@ const handler = createHandler({
   getUserEmail,
   // LIVE since 16 Oct 2026. Set the CPD_DATASET secret to 'test' to use the archived test record.
   dataset: Deno.env.get('CPD_DATASET') === 'test' ? 'test' : 'live',
-  initialStaff: INITIAL_STAFF
+  initialStaff: INITIAL_STAFF,
+  sendEmail: EMAIL_URL && EMAIL_KEY ? sendEmail : undefined,
+  siteUrl: 'https://wapadverts-droid.github.io/wap-cpd-events-app/',
+  // deno-lint-ignore no-explicit-any
+  background: (p: Promise<unknown>) => (globalThis as any).EdgeRuntime?.waitUntil ? (globalThis as any).EdgeRuntime.waitUntil(p) : p
 });
 
 Deno.serve(handler);

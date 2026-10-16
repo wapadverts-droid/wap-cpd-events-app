@@ -167,8 +167,8 @@ test('attendee validation: at least one contact; channel must match; consent req
 
 test('duplicates flagged for review, not silently merged', () => {
   const s = fresh();
-  const a = CPD.createBooking(s.state, s.ctx, null, person({ email: 'same@example.com' }), {});
-  const b = CPD.createBooking(s.state, s.ctx, null, person({ email: 'SAME@example.com' }), {});
+  const a = CPD.createBooking(s.state, s.ctx, null, person({ phone: '081 999 0001' }), {});
+  const b = CPD.createBooking(s.state, s.ctx, null, person({ phone: '+264 81 999 0001' }), {});
   assert.equal(a.flags.duplicate, null);
   assert.equal(b.flags.duplicate.matches[0].ref, a.ref);
   throwsCode(() => CPD.markDetailsChecked(s.state, s.ctx, s.pa, b.id), 'dup_open');
@@ -362,4 +362,50 @@ test('contact details: two public contacts, no organiser name; editable and vali
   assert.equal(CPD.contactText(s.state.event), '+264 81 000 0000');
   s.ctx.now = Date.parse('2026-10-23T12:00:00+02:00');
   assert.throws(() => CPD.createBooking(s.state, s.ctx, null, person(), {}), e => /contact us: \+264 81 000 0000/.test(e.message));
+});
+
+test('email: required online; staff may tick "no email"; one online booking per email address', () => {
+  const s = fresh();
+  assert.throws(() => CPD.createBooking(s.state, s.ctx, null, person({ email: '' }), {}), e => e.code === 'invalid' && /email/i.test(e.errors.email));
+  const a = CPD.createBooking(s.state, s.ctx, null, person({ email: 'One@Example.com' }), {});
+  assert.throws(() => CPD.createBooking(s.state, s.ctx, null, person({ email: 'one@example.com' }), {}), e => e.code === 'already_booked' && e.bookingId === a.id);
+  assert.equal(s.state.bookings.length, 1, 'nothing saved for the repeat attempt');
+  assert.throws(() => CPD.createBooking(s.state, s.ctx, s.pa, person({ email: '' }), { channel: 'staff' }), e => e.code === 'invalid');
+  const w = CPD.createBooking(s.state, s.ctx, s.pa, person({ email: '', channel: 'sms', noEmail: true }), { channel: 'staff', source: 'staff-walkin' });
+  assert.equal(w.email, '');
+  // a cancelled booking does not block booking again
+  CPD.cancelBooking(s.state, s.ctx, null, null, { token: a.token });
+  assert.ok(CPD.createBooking(s.state, s.ctx, null, person({ email: 'one@example.com' }), {}));
+  // attendees cannot remove their email
+  const b = s.state.bookings.at(-1);
+  assert.throws(() => CPD.updateDetails(s.state, s.ctx, null, null, { email: '' }, { token: b.token }), e => e.code === 'invalid');
+});
+
+test('automatic email: queued only when sending is connected; resend and repeat-attempt limits', () => {
+  const s = fresh();
+  CPD.createBooking(s.state, s.ctx, null, person(), {});
+  assert.equal(s.state.messages.filter(m => m.channel === 'email' && m.auto).length, 0, 'practice mode: no automatic email');
+  s.state.integration.email = true;
+  const b = CPD.createBooking(s.state, s.ctx, null, person(), {});
+  const q = s.state.messages.filter(m => m.bookingId === b.id && m.channel === 'email');
+  assert.equal(q.length, 1); assert.equal(q[0].status, 'queued'); assert.equal(q[0].type, 'confirmation');
+  const ids = CPD.claimEmails(s.state, s.ctx);
+  assert.deepEqual(ids, [q[0].id]); assert.equal(q[0].status, 'sending');
+  assert.deepEqual(CPD.claimEmails(s.state, s.ctx), [], 'not claimed twice');
+  CPD.markEmailResult(s.state, s.ctx, q[0].id, false, 'quota');
+  assert.equal(q[0].status, 'failed');
+  throwsCode(() => CPD.setMessageStatus(s.state, s.ctx, s.pa, q[0].id, 'sent'), 'no_integration');
+  const r = CPD.queueEmailResend(s.state, s.ctx, s.pa, q[0].id);
+  assert.equal(r.status, 'queued');
+  assert.ok(CPD.queueLinkResend(s.state, s.ctx, b.id));
+  assert.equal(CPD.queueLinkResend(s.state, s.ctx, b.id), null, 'at most one repeat-attempt email per 10 minutes');
+  s.ctx.now += 11 * CPD.MIN;
+  assert.ok(CPD.queueLinkResend(s.state, s.ctx, b.id));
+  // waiting list and offer emails
+  for (let i = 0; i < 48; i++) CPD.createBooking(s.state, s.ctx, null, person(), {}); // 2 + 48 = 50 booked
+  const w = CPD.createBooking(s.state, s.ctx, null, person(), {});
+  assert.ok(s.state.messages.some(m => m.bookingId === w.id && m.channel === 'email' && m.type === 'waitlist'));
+  CPD.cancelBooking(s.state, s.ctx, s.pa, b.id, {});
+  CPD.makeOffer(s.state, s.ctx, s.pa);
+  assert.ok(s.state.messages.some(m => m.bookingId === w.id && m.channel === 'email' && m.type === 'offer'));
 });

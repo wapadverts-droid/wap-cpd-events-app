@@ -29,12 +29,13 @@
       used.add(f + l); i++;
       const prof = PROF[Math.floor(rand() * PROF.length)];
       const ch = rand() < 0.65 ? 'whatsapp' : 'email';
-      const hasEmail = ch === 'email' || rand() < 0.7;
+      const hasEmail = true; rand(); // online RSVPs require an email
+      const n = String(i).padStart(2, '0');
       out.push({
         firstName: f, lastName: l, profession: prof, hpcnaStatus: 'provided',
         hpcna: `DEMO-${PCODE[prof]}-${String(1000 + i * 37).slice(-4)}`,
         phone: `081 555 ${String(1000 + i * 13).slice(-4)}`,
-        email: hasEmail ? `${f.toLowerCase()}.${l.toLowerCase().replace('demo-', '')}@example.com` : '',
+        email: hasEmail ? `${f.toLowerCase()}.${l.toLowerCase().replace('demo-', '')}${n}@example.com` : '',
         channel: ch, consentEvent: true, consentMarketing: rand() < 0.4
       });
     }
@@ -84,7 +85,7 @@
         const when = at(`2026-10-${String(day).padStart(2, '0')}`, `${String(8 + (i % 5) * 2).padStart(2, '0')}:15`);
         let extra = {};
         if (i === 9) extra = { hpcnaStatus: 'unavailable', hpcna: '' };
-        if (i === 30) extra = { email: people.slice(0, 20).find(x => x.email).email, channel: 'email', phone: '' }; // same email as an earlier booking
+        if (i === 30) extra = { phone: people[3].phone, firstName: people[3].firstName, lastName: people[3].lastName }; // same person as an earlier booking (name and phone)
         book(when, extra);
       }
       ctx.now = at('2026-10-10', '14:00');
@@ -122,7 +123,7 @@
       // Event day
       ctx.now = at('2026-10-23', '09:00'); CPD.cancelBooking(state, ctx, null, null, { token: tok(B[33]), reason: 'Unwell' });
       ctx.now = at('2026-10-23', '12:05'); CPD.processExpiries(state, ctx);
-      const paper = book(at('2026-10-23', '17:40'), { channel: 'sms', email: '' }, { channel: 'staff', source: 'paper-form' });
+      const paper = book(at('2026-10-23', '17:40'), { channel: 'sms', email: '', noEmail: true }, { channel: 'staff', source: 'paper-form' });
       const walk = book(at('2026-10-23', '17:45'), {}, { channel: 'staff', source: 'staff-walkin' });
       ctx.now = at('2026-10-23', '17:50');
       CPD.allocateContingencyFor(state, ctx, adminS, W[0].id, 'Arrived in person after offer expired; contingency approved');
@@ -140,7 +141,7 @@
       }
       // Two walk-ins after the event is full: they join the waiting list at the desk
       book(at('2026-10-23', '18:20'), {}, { channel: 'staff', source: 'staff-walkin' });
-      book(at('2026-10-23', '18:24'), { email: '', channel: 'sms' }, { channel: 'staff', source: 'staff-walkin' });
+      book(at('2026-10-23', '18:24'), { email: '', channel: 'sms', noEmail: true }, { channel: 'staff', source: 'staff-walkin' });
       const arrived = state.bookings.filter(b => b.arrival);
       // Early departures
       const e1 = arrived[6], e2 = arrived[17];
