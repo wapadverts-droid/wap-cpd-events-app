@@ -9,15 +9,18 @@
  * Gmail account itself. Free Gmail accounts can send to 100 recipients a day this way.
  */
 
-// 1) Replace with your own long passphrase (the same one you save in Supabase as EMAIL_SCRIPT_KEY).
-const SECRET = 'PUT-YOUR-PASSPHRASE-HERE';
+// Type your NEW passphrase between the quote marks. This is the ONLY place to change.
+// Save the exact same passphrase in Supabase as the secret EMAIL_SCRIPT_KEY.
+const SECRET = 'TYPE-YOUR-NEW-PASSPHRASE-HERE';
 
 const SENDER_NAME = 'WAP Medical Supplies CPD';
 
 function doPost(e) {
   try {
     const d = JSON.parse((e && e.postData && e.postData.contents) || '{}');
-    if (SECRET === 'PUT-YOUR-PASSPHRASE-HERE' || d.key !== SECRET) return reply({ ok: false, error: 'Not allowed (passphrase does not match).' });
+    if (!SECRET || SECRET.indexOf('TYPE-YOUR') === 0 || d.key !== SECRET) {
+      return reply({ ok: false, error: 'Not allowed (passphrase does not match).' });
+    }
     const to = String(d.to || '').trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(to)) return reply({ ok: false, error: 'Invalid email address.' });
     if (MailApp.getRemainingDailyQuota() < 1) return reply({ ok: false, error: 'Daily Gmail sending limit reached. Try again tomorrow.' });
