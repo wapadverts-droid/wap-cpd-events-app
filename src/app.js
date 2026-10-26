@@ -973,15 +973,18 @@
     const fs = A.forms.reg || {}, st = C.stats(S()), n = now(), t = T();
     const v = fs.values || {};
     const res = A.ui.regResult;
+    const postEvent = n > t.eventEnd;
+    if (postEvent && !can('register.postEvent')) return { title: 'Register attendee', html: '<h1>Register an attendee</h1><div class="alert warn">The event has ended. Ask an administrator to add missing attendees.</div>' };
     return { title: 'Register attendee', html: `<div class="page-head"><div><h1>Register an attendee</h1><p>For phone, walk-in, email and paper-form registrations. ${st.publicFree} public place(s) free, ${st.waitlisted} waiting, ${st.contingencyFree} contingency.</p></div></div>
-      ${n >= t.rsvpClose ? `<div class="alert warn"><div>Online RSVPs are closed. Staff can still register people while places remain; when full, they join the waiting list.</div></div>` : ''}
+      ${postEvent ? '<div class="alert info">Administrator post-event entry: record the reason below. Arrival, completion and feedback must be recorded separately. No booking confirmation will be sent.</div>' : ''}
+      ${!postEvent && n >= t.rsvpClose ? `<div class="alert warn"><div>Online RSVPs are closed. Staff can still register people while places remain; when full, they join the waiting list.</div></div>` : ''}
       ${res ? `<div class="alert ok"><div><b>${esc(res.name)}</b> — ${esc(res.text)} Reference <span class="mono">${esc(res.ref)}</span>.</div><a class="btn btn-s" href="#s-p-${res.id}">Open record</a></div>` : ''}
       <form class="panel form" data-form="reg" novalidate>
         <div class="two"><div class="field"><label for="r-source">How did they register?</label><select id="r-source" name="source">${[['staff-phone', 'Phone call'], ['staff-walkin', 'Walk-in at the desk'], ['paper-form', 'Paper registration form'], ['staff-email', 'Email']].map(([k, l]) => `<option value="${k}" ${v.source === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         ${can('contingency.allocate') ? `<div class="field"><label for="r-pool">Place</label><select id="r-pool" name="pool"><option value="auto">Normal: advance place, or waiting list if full</option><option value="contingency" ${v.pool === 'contingency' ? 'selected' : ''}>Contingency place (administrator)</option></select></div>` : '<div></div>'}</div>
-        ${can('contingency.allocate') ? `<div class="field"><label for="r-reason">Reason for contingency place</label><span class="hint">Required when using a contingency place.</span><input type="text" id="r-reason" name="reason" value="${esc(v.reason)}"></div>` : ''}
+        ${can('contingency.allocate') ? `<div class="field"><label for="r-reason">${postEvent ? 'Reason for post-event addition' : 'Reason for contingency place'}</label><span class="hint">${postEvent ? 'Required for every post-event addition; also explains any contingency allocation.' : 'Required when using a contingency place.'}</span><input type="text" id="r-reason" name="reason" value="${esc(v.reason)}"></div>` : ''}
         ${attendeeFields(fs, { staff: true, p: 'r' })}
-        <button class="btn btn-primary btn-xl" type="submit">Register</button>
+        <button class="btn btn-primary btn-xl" type="submit">${postEvent ? 'Add post-event attendee' : 'Register'}</button>
         <p class="small muted">The rules check capacity again at the moment of saving, so two people registering at once cannot overbook.</p>
       </form>` };
   }

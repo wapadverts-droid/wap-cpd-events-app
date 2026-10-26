@@ -26,6 +26,7 @@
 
   const PERMS = {
     'register.routine': ['admin', 'pa'],
+    'register.postEvent': ['admin'],
     'booking.edit': ['admin', 'pa'],
     'booking.cancel': ['admin', 'pa'],
     'booking.reinstate': ['admin', 'pa'],
@@ -394,9 +395,12 @@
         need(state, actor, 'contingency.allocate');
         if (clean(opts.reason).length < 5) fail('reason', 'Record a reason for using a contingency place (at least a few words).');
       }
-      if (now > t.eventEnd) fail('closed', 'The event has ended. New registrations are closed.');
+      if (now > t.eventEnd) {
+        if (!can(state, actor, 'register.postEvent')) fail('closed', 'Only an administrator can add attendees after the event.');
+        if (clean(opts.reason).length < 5) fail('reason', 'Record why this attendee is being added after the event.');
+      }
     } else {
-      if (now >= t.rsvpClose) fail('rsvp_closed', `Online RSVPs closed at ${fmt(t.rsvpClose, state.event.timezone)}. Please contact us: ${contactText(state.event)}.`);
+      if (now >= t.rsvpClose || now > t.eventEnd) fail('rsvp_closed', `Online RSVPs closed at ${fmt(t.rsvpClose, state.event.timezone)}. Please contact us: ${contactText(state.event)}.`);
     }
     if (!isStaff && input && clean(input.website)) fail('spam', 'Your RSVP could not be accepted. Please try again, or contact us.');
     const val = validateAttendee(input, { staff: isStaff, requireEmail: !isStaff || !(input && input.noEmail) });
@@ -418,6 +422,7 @@
     } else {
       status = 'waitlisted'; pool = 'public';
     }
+    if (now > t.eventEnd && status !== 'confirmed') fail('capacity', 'No advance place is available. Select a contingency place if one remains.');
     state.counters.booking++;
     const b = Object.assign({}, v, {
       id: 'b' + state.counters.booking + randStr(ctx, 4, ALPHA),
@@ -425,6 +430,7 @@
       ref: newRef(state, ctx),
       token: randStr(ctx, 26, ALNUM),
       createdAt: now,
+      postEventReason: now > t.eventEnd ? clean(opts.reason) : '',
       source: isStaff ? (opts.source || 'staff-desk') : 'online',
       createdBy: staff ? staff.name : 'Online RSVP',
       status, pool,
@@ -443,7 +449,11 @@
     const who = staff ? whoStaff(staff) : WHO_ATTENDEE;
     audit(state, ctx, who, pool === 'contingency' ? 'Contingency place allocated' : (status === 'waitlisted' ? 'Added to waiting list' : 'Booking created'),
       b.ref, `${fullName(b)} · ${b.source}${pool === 'contingency' ? ' · Reason: ' + b.contingencyReason : ''}${dups.length ? ' · Possible duplicate of ' + dups.map(d => d.ref).join(', ') : ''}`);
-    prepareMessage(state, ctx, null, b.id, status === 'waitlisted' ? 'waitlist' : 'confirmation');
+    if (now > t.eventEnd) {
+      audit(state, ctx, who, 'Post-event attendee added', b.ref, `${fullName(b)} · Reason: ${b.postEventReason}`);
+    } else {
+      prepareMessage(state, ctx, null, b.id, status === 'waitlisted' ? 'waitlist' : 'confirmation');
+    }
     return b;
   }
 
