@@ -214,7 +214,7 @@ test('QR payload identifies a booking and rejects tampering', () => {
   assert.equal(CPD.parseQr(s.state, CPD.qrPayload(b).slice(0, -1) + 'x'), null);
 });
 
-test('feedback: mandatory, once only, anonymous storage', () => {
+test('feedback: optional for certificates, once only, anonymous storage', () => {
   const s = fresh();
   const b = CPD.createBooking(s.state, s.ctx, null, person(), {});
   const ans = { ratings: { relevance: 5, quality: 4, usefulness: 4, overall: 5 }, choices: { understanding: 'Yes', apply: 'Partly', bias: 'Yes' }, improve: 'More cases', topics: ['Ethics'] };
@@ -230,16 +230,17 @@ test('feedback: mandatory, once only, anonymous storage', () => {
   assert.equal(CPD.feedbackSummary(s.state, s.admin).ratings.relevance.avg, 5);
 });
 
-test('certificate: all five conditions, admin release, sample before approval, controlled correction', () => {
+test('certificate: attendance and signature checks, manual fallback, controlled correction', () => {
   const s = fresh();
   const b = CPD.createBooking(s.state, s.ctx, null, person(), {});
   const codes = () => CPD.blockers(s.state, b).map(x => x.code);
-  assert.deepEqual(codes().sort(), ['approval', 'details', 'no_arrival', 'no_completion', 'no_feedback'].sort());
+  assert.deepEqual(codes().sort(), ['approval', 'details', 'no_arrival', 'no_completion', 'signature'].sort());
   s.ctx.now = at('2026-10-23', '17:40'); CPD.recordArrival(s.state, s.ctx, s.pa, b.id, 'qr');
   s.ctx.now = at('2026-10-23', '19:31'); CPD.confirmCompletion(s.state, s.ctx, s.pa, b.id, 'register');
   CPD.markDetailsChecked(s.state, s.ctx, s.pa, b.id);
-  assert.deepEqual(codes().sort(), ['approval', 'no_feedback']);
+  assert.deepEqual(codes().sort(), ['approval', 'signature']);
   CPD.recordPaperFeedback(s.state, s.ctx, s.pa, b.id, null);
+  CPD.updateSignatory(s.state,s.ctx,s.admin,{name:'Test signatory',image:'data:image/png;base64,TEST'});
   assert.deepEqual(codes(), ['approval']);
   throwsCode(() => CPD.releaseCertificate(s.state, s.ctx, s.admin, b.id), 'blocked');
   CPD.updateApproval(s.state, s.ctx, s.admin, { activityNumber: 'TEST-123', ceus: '2', level: '1' });

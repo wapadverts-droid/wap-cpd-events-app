@@ -35,7 +35,7 @@
 
   /* opts: { booking, cert, sample(bool), demo(bool) } */
   function certificate(state, opts) {
-    const e = state.event, doc = newDoc('landscape');
+    const e = CPD.certificateEvent(state, opts.cert), doc = newDoc('landscape');
     const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
     const cert = opts.cert, approval = cert ? cert.approval : e.approval;
     const snap = cert ? cert.snapshot : {
@@ -58,7 +58,7 @@
     centre(doc, 'attended the CPD activity', 282, 11);
     centre(doc, safe(e.topic), 308, 20, 'bold');
     const dateStr = CPD.fmt(CPD.times(e).eventStart, e.timezone, { day: 'numeric', month: 'long', year: 'numeric' });
-    centre(doc, `${dateStr} | ${safe(e.venueShort)}`, 330, 11);
+    centre(doc, `Date of event: ${dateStr} | ${safe(e.venueShort)}`, 330, 11);
     centre(doc, `Provider accreditation number: ${safe(e.providerNumber)}`, 360, 11);
     centre(doc, `Activity accreditation number: ${safe(approval.activityNumber) || '______________________'}`, 382, 11);
     centre(doc, `Approved CEUs: ${safe(approval.ceus) || '__________'}      Level: ${safe(approval.level) || '__________'}`, 404, 11);
@@ -67,7 +67,7 @@
     doc.setLineWidth(0.6);
     doc.line(60, 512, 270, 512); doc.line(W - 270, 512, W - 60, 512);
     const sig = e.signatory || {};
-    if (sig.image && cert) { try { doc.addImage(sig.image, 'PNG', 90, 462, 150, 46, undefined, 'FAST'); } catch (err) { /* ignore bad image */ } }
+    if (sig.image) { try { doc.addImage(sig.image, 'PNG', 90, 462, 150, 46, undefined, 'FAST'); } catch (err) { /* ignore bad image */ } }
     doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
     doc.text('Authorised provider signature', 60, 527);
     if (sig.name) { doc.setFontSize(9); doc.text(safe(sig.name + (sig.title ? ', ' + sig.title : '')), 60, 540); }
@@ -187,7 +187,7 @@
     doc.setFont('helvetica', 'normal'); doc.text('• Which areas would you like future CPDs on? (tick or add your own)', 52, y); y += 20;
     for (const t of S.topics.concat(['Other: __________________________'])) { box(doc, 64, y, 10); doc.text(t, 80, y); y += 18; }
     doc.setFontSize(8); doc.setTextColor.apply(doc, GREY);
-    doc.text('To receive your certificate, attend the full session and complete this evaluation. Hand it to reception before you leave.', 40, 810);
+    doc.text('This evaluation is optional for certificate issuance. Your feedback helps improve future events.', 40, 810);
     return doc;
   }
 

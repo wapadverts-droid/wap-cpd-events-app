@@ -1,0 +1,34 @@
+WAP CPD APP — OCTOBER 2026 UPDATE
+
+Your existing bookings, attendees, saved signature and approval details stay in the same database. Do not delete your repository or reset the database.
+
+UPLOAD IN ONE GO
+1. Extract the downloaded ZIP (Windows: right-click → Extract All).
+2. Open the extracted UPLOAD-THIS folder.
+3. Open https://github.com/wapadverts-droid/wap-cpd-events-app and select main.
+4. Click Add file → Upload files.
+5. Select all the files AND folders INSIDE UPLOAD-THIS, then drag them into GitHub.
+   Do not drag the outer UPLOAD-THIS folder itself. index.html must stay at the repository root.
+6. Click Commit changes. No build command is needed: index.html and the server files are already built.
+7. Open the Actions tab. Wait for BOTH the Pages deployment and Deploy server program to Supabase to finish successfully.
+
+IF SERVER DEPLOYMENT IS SKIPPED
+The workflow needs the existing GitHub secret SUPABASE_ACCESS_TOKEN. A green workflow with a skipped deploy has not updated the server. Check the Check the Supabase access token is saved step. If absent, a Supabase account administrator must create a personal access token and save it in repository Settings → Secrets and variables → Actions → SUPABASE_ACCESS_TOKEN. Do not send it in chat or add it to a file. Then Actions → Deploy server program to Supabase → Run workflow.
+
+FIRST USE
+1. Refresh https://wapadverts-droid.github.io/wap-cpd-events-app/ with Ctrl+F5.
+2. Sign in as administrator. The main menu should show Overview, Attendees, Certificates, Settings and More.
+3. The first administrator view archives pre-event bookings with no recorded attendance. More → Archived / No-shows lets you restore mistakes. Late entries such as Musa and Tawanda stay active for attendance checking.
+4. Settings shows your existing signature and HPCNA approval details. Preview one certificate and check the signature and Date of event: 23 October 2026.
+5. Attendees → open a name → Confirm attended. Use actual times from the event register; check attendee details. Existing confirmed attendance is processed automatically.
+6. Certificates issue without an individual release or survey once all remaining checks pass. Existing certificate numbers, links and issue dates are retained.
+7. Certificates → Send all certificates (if connected) or Prepare all WhatsApp messages (manual sending). Read WHATSAPP-SETUP.md for optional automatic WhatsApp sending.
+
+WHAT IS INCLUDED
+Automatic attendance-triggered issuance; optional surveys; saved signature in preview and PDF; explicit event date and separate issue date; immutable signature/event layouts; certificate email queuing; WhatsApp bulk send/resend, status and retry controls; no-show archive and restore; simpler admin screens; admin post-event additions.
+
+IMPORTANT
+Fully automatic WhatsApp sending needs the business messaging connection described in WHATSAPP-SETUP.md. Uploading to GitHub does not create that connection.
+Existing signatures stay in the database; no signature or real attendee data is included in this ZIP.
+Legacy issued certificates are frozen using the currently saved event details and signature on first synchronization. Old settings cannot be recovered if they had already changed.
+The original server tests requiring a local PostgreSQL service remain in the source. Additional post-event regression tests are included.

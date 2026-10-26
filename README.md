@@ -1,16 +1,16 @@
 # WAP CPD Events App
 
-A mobile-friendly web app for WAP Medical Supplies (CPD provider ORG01637) that manages CPD attendees from advance RSVP through arrival, session completion, mandatory feedback and certificate release.
+A mobile-friendly web app for WAP Medical Supplies (CPD provider ORG01637) that manages CPD attendees from advance RSVP through arrival, session completion, optional feedback, automatic certificate issuance and WhatsApp sending.
 
 First event: **Clinical Update on Rhinosinusitis**, Friday 23 October 2026, Epikaizo Guest House, Outapi. Event details are configurable in the staff Settings page for future events.
 
 Website: https://wapadverts-droid.github.io/wap-cpd-events-app/
 
-## Status: LIVE (since 16 October 2026)
+## October 2026 post-event update (download package; not deployed by this build)
 
-Real RSVPs are taken at the website above. Bookings from every phone go to one shared database (Supabase project `wap-cpd-test`, now serving the live record), so staff see all bookings and the 50-place limit holds for everyone. Earlier test bookings are archived in the same database (record `main`) and are not shown.
+The existing website and database remain unchanged until this package is uploaded and deployed. Bookings from every phone go to one shared database (Supabase project `wap-cpd-test`, now serving the live record), so staff see all bookings and the 50-place limit holds for everyone. Earlier test bookings are archived in the same database (record `main`) and are not shown.
 
-Automatic emails (confirmation, waiting list, place offers) are sent through the WAP Gmail account via Google Apps Script (`server/email-script.gs`; Supabase secrets `EMAIL_SCRIPT_URL` and `EMAIL_SCRIPT_KEY`; up to 100 recipients a day). Known limits: WhatsApp messages are prepared for staff to send by hand; QR scanning reads a photo rather than a live camera feed; HPCNA requirements for certificate content have not been checked against current official guidance. Data is stored in Supabase's European region (accepted by WAP).
+Automatic emails (confirmation, waiting list, place offers) are sent through the WAP Gmail account via Google Apps Script (`server/email-script.gs`; Supabase secrets `EMAIL_SCRIPT_URL` and `EMAIL_SCRIPT_KEY`; up to 100 recipients a day). WhatsApp certificate delivery uses the optional Meta Cloud API connection described in WHATSAPP-SETUP.md. Without that connection, messages are prepared for staff to send by hand. Known limits: WhatsApp API acceptance is recorded but recipient delivery webhooks are not connected; QR scanning reads a photo rather than a live camera feed; HPCNA requirements for certificate content have not been checked against current official guidance. Data is stored in Supabase's European region (accepted by WAP).
 
 Future changes are rehearsed in practice mode (staff: Settings → Practice mode) before being uploaded.
 
@@ -49,10 +49,31 @@ Initial staff: WAP Administrator (wapadverts@gmail.com, Administrator) and Sarah
 
 ```
 python3 build.py                         # writes index.html and supabase/functions/
-node --test tests/core.test.js           # rules tests
+node --test tests/core.test.js tests/post-event.test.js           # rules tests
 PGURL=... WAPCPD_LIB=... node --test tests/server.test.mjs   # server tests (local Postgres)
 WAPCPD_LIB=... python3 tests/e2e.py      # browser tests, practice mode
 PGURL=... WAPCPD_LIB=... python3 tests/e2e_remote.py         # browser tests, shared database
 ```
 
 `WAPCPD_LIB` points to a `node_modules` folder with `postgres@3.4.4`, `jspdf@2.5.1`, `qrcode-generator@1.4.4` and `jsqr@1.4.0`.
+
+## Post-event behaviour
+
+- First administrator sign-in after server deployment archives pre-event bookings with no arrival, completion or current certificate. It runs once per event date. Late registrations are kept active until attendance is verified. Restore mistakes in More → Archived / No-shows.
+- Confirmed session attendance, checked attendee details, resolved exceptions/duplicates, approved activity details and a saved signature cause automatic issuance. Arrival or a confirmed booking alone is insufficient. The survey is optional.
+- Every newly issued certificate refers to an immutable event/signature layout. Existing certificates gain a layout snapshot using the current saved event/signature on first synchronization; number, private link, version and issue date are preserved. Their earlier settings cannot be reconstructed if those settings had already changed.
+- Existing eligible attendees are processed on the first signed-in staff view or successful action. No data reset or attendee import is required.
+- Certificate sending creates private WhatsApp links and also queues email when connected. No messages leave this downloaded package until it is deployed, signed in, and a sending service is connected.
+- WhatsApp failures require an explicit retry. Uncertain network results are flagged rather than silently retried. There is no claim of confirmed recipient delivery without a webhook.
+- The main screens are Overview, Attendees, Certificates and Settings; supporting tools are under More.
+
+See START-HERE.txt and WHATSAPP-SETUP.md for upload and setup instructions.
+
+Additional validation (with dependencies installed outside the deliverable):
+
+```
+WAPCPD_LIB=/path/to/node_modules node tests/integration-post-event.mjs
+WAPCPD_LIB=/path/to/node_modules node tests/ui-post-event.cjs
+```
+
+The integration check needs `@electric-sql/pglite`; the UI check needs `playwright` with Chromium plus the browser PDF/QR libraries listed above. `PLAYWRIGHT_MODULE` and `CHROMIUM_PATH` can select an existing browser installation. No test dependencies are needed to upload or run the built website.

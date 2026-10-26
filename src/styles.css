@@ -303,3 +303,9 @@ fieldset.field legend { padding: 0; margin-bottom: 6px; }
 .alert.success p { margin: 0 0 8px; }
 ol.next { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
 ol.next .btn { margin-left: 6px; vertical-align: middle; }
+
+/* Keep all five staff sections visible on small screens. */
+@media (max-width: 760px) {
+  .sidenav { flex-wrap: wrap; overflow-x: visible; }
+  .sidenav > a { flex: 1 1 auto; text-align: center; }
+}

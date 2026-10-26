@@ -1,3 +1,13 @@
+# October 2026 post-event update
+
+This section supersedes historical decisions below concerning mandatory evaluation and individual admin certificate release. Current behaviour and setup are documented in README.md, START-HERE.txt and WHATSAPP-SETUP.md.
+
+Confirmed session attendance and remaining checks cause automatic issuance. Surveys are optional. No-shows are archived with restore; late additions are retained. Signature/event layout snapshots preserve issued records. WhatsApp uses optional Cloud API template sending or honest manual-message preparation. API acceptance is not recipient delivery.
+
+Validation: 36 rules tests; PGlite transactional server integration; desktop/mobile browser checks; certificate PDF download and date/signature-label extraction. Tests use fictional records and a simulated messaging transport, not live Meta sending.
+
+---
+
 # Build notes
 
 ## Version history

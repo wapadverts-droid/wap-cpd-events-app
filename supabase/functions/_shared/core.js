@@ -28,6 +28,7 @@
   const PERMS = {
     'register.routine': ['admin', 'pa'],
     'register.postEvent': ['admin'],
+    'booking.archive': ['admin'],
     'booking.edit': ['admin', 'pa'],
     'booking.cancel': ['admin', 'pa'],
     'booking.reinstate': ['admin', 'pa'],
@@ -460,6 +461,16 @@
 
   function isLocked(state, b) { return state.certificates.some(c => c.bookingId === b.id && c.status === 'current'); }
 
+  function updateContact(state, ctx, actor, id, changes) {
+    const staff = need(state, actor, 'booking.edit'), b = findBooking(state, id);
+    const values = Object.assign({}, b);
+    for (const k of ['phone','email','channel']) if (changes[k] !== undefined) values[k] = changes[k];
+    const check = validateAttendee(values, {staff: true});
+    if (!check.ok) fail('invalid', 'Check the phone number, email and preferred channel.');
+    for (const k of ['phone','phoneIntl','email','channel']) b[k] = check.value[k];
+    audit(state, ctx, whoStaff(staff), 'Delivery contact corrected', b.ref, fullName(b));
+    return b;
+  }
   const EDITABLE = ['firstName', 'lastName', 'profession', 'professionOther', 'hpcnaStatus', 'hpcna', 'phone', 'email', 'channel', 'consentMarketing'];
   function updateDetails(state, ctx, actor, id, changes, opts) {
     opts = opts || {};
@@ -654,6 +665,7 @@
     let at = now;
     if (occurredAt != null) {
       at = occurredAt;
+      if (!Number.isFinite(at)) fail('time', 'Enter a valid time from the event record.');
       if (at > now) fail('future', 'The time cannot be in the future.');
       if (at < t.checkinOpen || at > t.eventEnd + HOUR) fail('range', 'The time must be during the event.');
     } else if (now > t.eventEnd + HOUR) {
@@ -830,6 +842,7 @@
   function submitFeedback(state, ctx, token, answers) {
     const b = bookingByToken(state, token);
     if (!b) fail('not_found', 'This feedback link is not valid.');
+    if (b.archived) fail('archived', 'This booking is archived. Please contact the organiser.');
     if (b.status !== 'confirmed') fail('state', 'Feedback is for booked attendees.');
     const t = times(state.event);
     if (ctx.now < t.feedbackOpen) fail('not_open', `The evaluation opens at ${fmt(t.feedbackOpen, state.event.timezone)}.`);
@@ -845,6 +858,7 @@
   function recordPaperFeedback(state, ctx, actor, id, answers) {
     const s = need(state, actor, 'feedback.paper');
     const b = findBooking(state, id);
+    if (b.archived) fail('archived', 'This booking is archived. Please contact the organiser.');
     if (b.status !== 'confirmed') fail('state', 'Feedback is for booked attendees.');
     if (b.feedback) fail('already', 'An evaluation is already recorded for this attendee.');
     if (ctx.now < times(state.event).feedbackOpen) fail('not_open', 'Evaluations are recorded after the session.');
@@ -902,7 +916,8 @@
     if (!b.completion) add('no_completion', 'Session completion not confirmed (signed register or QR check-out).', 'reception');
     else if (b.completion.status === 'early-pending') add('early_pending', 'Early departure is waiting for administrator review.', 'admin');
     else if (b.completion.status === 'early-rejected') add('early_rejected', 'Attendance was not accepted after an early departure.', 'admin');
-    if (!b.feedback) add('no_feedback', 'No evaluation recorded. NO FEEDBACK, NO CERTIFICATE.', 'attendee');
+    if (b.archived) add('archived', 'Booking is archived. Restore it before issuing a certificate.', 'admin');
+    if (!state.event.signatory || !state.event.signatory.image) add('signature', 'Saved authorised signature is missing. Add it in Settings.', 'admin');
     if (b.flags.duplicate && !b.flags.duplicate.resolved) add('duplicate', 'Possible duplicate booking needs review.', 'admin');
     if (b.flags.hpcnaReview && !b.flags.hpcnaReview.resolved) add('hpcna', 'Missing HPCNA registration number needs review.', 'admin');
     if (!b.detailsChecked) add('details', 'Attendee details not yet checked.', 'reception');
@@ -916,7 +931,7 @@
     if (cur) return { key: 'released', label: cur.version > 1 ? `Released (v${cur.version})` : 'Released', cert: cur, blockers: [] };
     const bl = blockers(state, b);
     if (b.status !== 'confirmed') return { key: 'na', label: '—', blockers: bl };
-    return bl.length ? { key: 'blocked', label: 'Blocked', blockers: bl } : { key: 'ready', label: 'Ready to release', blockers: [] };
+    return bl.length ? { key: 'blocked', label: 'Blocked', blockers: bl } : { key: 'ready', label: 'Ready to issue', blockers: [] };
   }
   function snapshotFor(b) {
     return {
@@ -932,11 +947,151 @@
       verify: randStr(ctx, 8, ALPHA),
       status: 'current', issuedAt: ctx.now, issuedBy: s.name, reason: reason || '',
       snapshot: snapshotFor(b),
+      layoutId: captureCertificateLayout(state),
       approval: Object.assign({}, state.event.approval),
       demo: state.mode === 'demo'
     };
     state.certificates.push(cert);
     return cert;
+  }
+  // Shared immutable layout snapshots avoid duplicating signature image bytes per attendee.
+  function captureCertificateLayout(state) {
+    const e = state.event;
+    const layout = {};
+    for (const k of ['provider', 'providerNumber', 'topic', 'date', 'timezone', 'utcOffset', 'programme', 'venueShort', 'signatory']) layout[k] = JSON.parse(JSON.stringify(e[k] == null ? null : e[k]));
+    state.certificateLayouts = state.certificateLayouts || {};
+    const text = JSON.stringify(layout);
+    for (const [id, saved] of Object.entries(state.certificateLayouts)) if (JSON.stringify(saved) === text) return id;
+    const id = 'layout-' + (Object.keys(state.certificateLayouts).length + 1);
+    state.certificateLayouts[id] = layout;
+    return id;
+  }
+  function certificateEvent(state, cert) {
+    const layout = cert && state.certificateLayouts && state.certificateLayouts[cert.layoutId];
+    return layout ? Object.assign({}, state.event, layout) : state.event;
+  }
+  function synchronizeCertificates(state, ctx) {
+    let count = 0;
+    // Freeze legacy certificates on first use, without changing their identity or issue date.
+    for (const cert of state.certificates) if (!cert.layoutId) cert.layoutId = captureCertificateLayout(state);
+    for (const b of state.bookings) {
+      if (currentCert(state, b) || blockers(state, b).length) continue;
+      state.counters.cert++;
+      const number = `${state.event.providerNumber}-${state.event.refPrefix}-${String(state.counters.cert).padStart(4, '0')}`;
+      const cert = issue(state, ctx, WHO_SYSTEM, b, number, 1, 'Automatically issued after confirmed session attendance');
+      audit(state, ctx, WHO_SYSTEM, 'Certificate automatically issued', b.ref, `${fullName(b)} · ${cert.number}`);
+      queueCertificateDelivery(state, ctx, b, false);
+      count++;
+    }
+    return count;
+  }
+  function archiveNoShows(state, ctx, actor) {
+    const staff = need(state, actor, 'booking.archive');
+    if (ctx.now <= times(state.event).eventEnd) fail('too_early', 'No-shows can only be archived after the event ends.');
+    let count = 0;
+    for (const b of state.bookings) {
+      // Never infer absence for a newly entered late record, an arrival, or a certificate holder.
+      if (b.archived || b.archiveRestored || b.arrival || b.completion || currentCert(state, b) || b.createdAt > times(state.event).eventEnd) continue;
+      b.archived = { at: ctx.now, by: staff.name, reason: 'No attendance recorded after event' };
+      for (const m of state.messages) if (m.bookingId === b.id && ['prepared', 'queued'].includes(m.status)) { m.status = 'cancelled'; m.history.push({ status: 'cancelled', at: ctx.now, by: staff.name }); }
+      audit(state, ctx, whoStaff(staff), 'No-show archived', b.ref, fullName(b)); count++;
+    }
+    return count;
+  }
+  function restoreArchived(state, ctx, actor, id) {
+    const staff = need(state, actor, 'booking.archive'), b = findBooking(state, id);
+    if (!b.archived) fail('state', 'This booking is not archived.');
+    b.archiveRestored = { at: ctx.now, by: staff.name }; b.archived = null;
+    audit(state, ctx, whoStaff(staff), 'Archived booking restored', b.ref, fullName(b));
+    return b;
+  }
+  function applyPostEventUpdate(state, ctx, actor) {
+    need(state, actor, 'booking.archive');
+    const key = state.event.date;
+    state.postEventUpdates = state.postEventUpdates || {};
+    let archived = 0, first = false;
+    if (ctx.now > times(state.event).eventEnd && !state.postEventUpdates[key]) {
+      first = true;
+      archived = archiveNoShows(state, ctx, actor);
+      state.postEventUpdates[key] = { at: ctx.now, version: 2 };
+    }
+    const issued = synchronizeCertificates(state, ctx);
+    for (const b of state.bookings) {
+      const prepared = state.messages.some(m => m.bookingId === b.id && m.type === 'certificate' && m.channel === 'whatsapp' && m.status === 'prepared');
+      if (first || (prepared && state.integration && state.integration.whatsapp)) queueCertificateDelivery(state, ctx, b, false);
+    }
+    return { archived, issued };
+  }
+  function queueCertificateDelivery(state, ctx, b, resend) {
+    const cert = currentCert(state, b);
+    if (!cert || b.archived || !completed(b) || !b.consentEvent) return null;
+    // Prefer WhatsApp when a valid number is recorded. Email is also queued if connected.
+    let message = null;
+    if (b.phoneIntl) {
+      const old = state.messages.filter(m => m.bookingId === b.id && m.type === 'certificate' && m.channel === 'whatsapp' && m.certificateId === cert.id);
+      const pending = old.find(m => ['prepared', 'queued', 'sending', 'unknown'].includes(m.status));
+      if (pending) {
+        if (pending.status === 'prepared' && state.integration && state.integration.whatsapp) pending.status = 'queued';
+        message = pending;
+      } else if (resend || !old.length) {
+        state.counters.msg++;
+        const status = state.integration && state.integration.whatsapp ? 'queued' : 'prepared';
+        message = { id: 'm' + state.counters.msg, bookingId: b.id, ref: b.ref, certificateId: cert.id, type: 'certificate', channel: 'whatsapp', to: '+' + b.phoneIntl, createdAt: ctx.now, status, history: [{status, at: ctx.now, by: 'System'}] };
+        state.messages.push(message);
+      }
+    }
+    if (state.integration && state.integration.email && b.email && !state.messages.some(m => m.bookingId === b.id && m.certificateId === cert.id && m.channel === 'email' && !['failed', 'cancelled'].includes(m.status))) {
+      const m = queueEmail(state, ctx, b, 'certificate', 'System'); m.certificateId = cert.id;
+    }
+    return message;
+  }
+  function sendAllCertificates(state, ctx, actor, resend) {
+    need(state, actor, 'cert.resend');
+    synchronizeCertificates(state, ctx);
+    let count = 0;
+    for (const b of state.bookings) if (queueCertificateDelivery(state, ctx, b, !!resend)) count++;
+    audit(state, ctx, WHO_SYSTEM, resend ? 'Certificate WhatsApp resend requested' : 'Certificate WhatsApp sending requested', '', `${count} message(s) ready or queued`);
+    return count;
+  }
+  function sendCertificateWhatsApp(state, ctx, actor, id, resend) {
+    need(state, actor, 'cert.resend');
+    const b = findBooking(state, id);
+    if (b.archived || !completed(b) || !currentCert(state, b)) fail('state', 'An issued certificate and confirmed session attendance are required.');
+    if (!b.phoneIntl) fail('phone', 'Correct the attendee’s mobile number first.');
+    if (!b.consentEvent) fail('consent', 'Event-message consent is required.');
+    const m = queueCertificateDelivery(state, ctx, b, !!resend);
+    if (!m) fail('already', 'Already sent. Use Resend WhatsApp if another copy is needed.');
+    return m;
+  }
+  function claimWhatsApps(state, ctx, max) {
+    const ids = [];
+    for (const m of state.messages) {
+      if (m.channel !== 'whatsapp') continue;
+      // A timed-out API call may already have sent: never retry it silently.
+      if (m.status === 'sending' && ctx.now - m.claimedAt > 2 * MIN) m.status = 'unknown';
+      if (m.status !== 'queued' || ids.length >= (max || 120)) continue;
+      const b = findBooking(state, m.bookingId), cert = currentCert(state, b);
+      if (b.archived || !completed(b) || !b.consentEvent || !cert || cert.id !== m.certificateId) { m.status = 'cancelled'; continue; }
+      m.status = 'sending'; m.claimedAt = ctx.now; ids.push(m.id);
+    }
+    return ids;
+  }
+  function markWhatsAppResult(state, ctx, id, result) {
+    const m = state.messages.find(m => m.id === id);
+    if (!m || m.status !== 'sending') return;
+    m.status = result.ok ? 'accepted' : (result.unknown ? 'unknown' : 'failed');
+    m.providerId = result.id || null; m.error = result.ok ? null : String(result.error || 'Sending failed').slice(0, 200);
+    m.history.push({ status: m.status, at: ctx.now, by: 'WhatsApp service' });
+  }
+  function retryWhatsApp(state, ctx, actor, id) {
+    need(state, actor, 'cert.resend');
+    const m = state.messages.find(m => m.id === id);
+    if (!m || m.channel !== 'whatsapp' || !['failed', 'unknown'].includes(m.status)) fail('state', 'Only failed or uncertain WhatsApp messages can be retried.');
+    const b = findBooking(state, m.bookingId);
+    if (b.archived || !completed(b) || !currentCert(state, b) || currentCert(state, b).id !== m.certificateId || !b.consentEvent) fail('state', 'This message is no longer eligible.');
+    if (!b.phoneIntl) fail('phone', 'Correct the mobile number first.');
+    m.status = state.integration && state.integration.whatsapp ? 'queued' : 'prepared'; m.to = '+' + b.phoneIntl;
+    m.history.push({status: m.status, at: ctx.now, by: 'Staff retry'}); return m;
   }
   function releaseCertificate(state, ctx, actor, id) {
     const s = need(state, actor, 'cert.release');
@@ -948,7 +1103,7 @@
     const number = `${state.event.providerNumber}-${state.event.refPrefix}-${String(state.counters.cert).padStart(4, '0')}`;
     const cert = issue(state, ctx, s, b, number, 1, 'First issue');
     audit(state, ctx, whoStaff(s), 'Certificate released', b.ref, `${fullName(b)} · ${number}`);
-    prepareMessage(state, ctx, null, b.id, 'certificate');
+    queueCertificateDelivery(state, ctx, b, false);
     return cert;
   }
   function releaseAllReady(state, ctx, actor) {
@@ -977,7 +1132,7 @@
     cur.status = 'superseded'; cur.supersededAt = ctx.now; cur.supersededReason = clean(reason);
     const cert = issue(state, ctx, s, b, cur.number, cur.version + 1, clean(reason));
     audit(state, ctx, whoStaff(s), 'Certificate corrected and reissued', b.ref, `${fullName(b)} · ${cur.number} v${cert.version} · ${clean(reason)}${diffs.length ? ' · ' + diffs.map(d => `${d.field}: "${d.from}" → "${d.to}"`).join('; ') : ''}`);
-    prepareMessage(state, ctx, null, b.id, 'certificate');
+    queueCertificateDelivery(state, ctx, b, false);
     return cert;
   }
   function certByToken(state, token) {
@@ -998,7 +1153,7 @@
     switch (type) {
       case 'confirmation':
         return { subject: `Booking confirmed: ${e.topic} CPD, ${fmtDate(t.eventStart, tz)}`,
-          body: `Dear ${name},\n\nYour place is confirmed for the CPD activity "${e.topic}".\n\nBooking reference: ${b.ref}\nDate: ${when}\nVenue: ${where}\nArrival and registration from ${e.programme[0].start}.\n\nGive your name at the registration desk. View or change your booking here:\n${L.manage || ''}\n\nTo receive your certificate, attend the full session and complete the evaluation. CPD points are subject to HPCNA approval of the activity.${sign}` };
+          body: `Dear ${name},\n\nYour place is confirmed for the CPD activity "${e.topic}".\n\nBooking reference: ${b.ref}\nDate: ${when}\nVenue: ${where}\nArrival and registration from ${e.programme[0].start}.\n\nGive your name at the registration desk. View or change your booking here:\n${L.manage || ''}\n\nTo receive your certificate, have your session attendance confirmed by staff. CPD points are subject to HPCNA approval of the activity.${sign}` };
       case 'waitlist':
         return { subject: `Waiting list: ${e.topic} CPD`,
           body: `Dear ${name},\n\nAll advance-booking places are taken, so you are on the waiting list (reference ${b.ref}). If a place becomes free we will send you an offer with a time limit to accept.\n\nManage your booking:\n${L.manage || ''}${sign}` };
@@ -1010,7 +1165,7 @@
           body: `Dear ${name},\n\nA reminder that "${e.topic}" takes place on ${when} at ${where}. Registration opens at ${e.programme[0].start}.\n\nYour reference: ${b.ref}. Can no longer attend? Please cancel so someone on the waiting list can take your place:\n${L.manage || ''}${sign}` };
       case 'feedback':
         return { subject: `Evaluation: ${e.topic} CPD`,
-          body: `Dear ${name},\n\nThank you for attending. Please complete the short evaluation now:\n${L.feedback || ''}\n\nYour certificate is issued once you have attended the full session and completed the evaluation.${sign}` };
+          body: `Dear ${name},\n\nThank you for attending. Please complete the short evaluation now:\n${L.feedback || ''}\n\nYour certificate is issued automatically when staff confirm your session attendance and the required details are complete. The evaluation is optional for certificate issuance.${sign}` };
       case 'certificate':
         return { subject: `Your CPD certificate: ${e.topic}`,
           body: `Dear ${name},\n\nYour certificate of attendance for "${e.topic}" is ready. Download it from your private link:\n${L.certificate || ''}\n\nPlease keep this link private.${sign}` };
@@ -1025,6 +1180,7 @@
       who = whoStaff(s);
     }
     const b = findBooking(state, id);
+    if (b.archived) fail('archived', 'Restore this archived booking before preparing messages.');
     if (type === 'certificate' && !currentCert(state, b)) fail('state', 'No released certificate to send.');
     const channel = b.channel;
     const to = channel === 'email' ? b.email : (b.phoneIntl ? '+' + b.phoneIntl : '');
@@ -1060,7 +1216,7 @@
   /* Server: after "you already have a booking", send that booking's link to its own email (at most every 10 minutes). */
   function queueLinkResend(state, ctx, bookingId) {
     const b = state.bookings.find(x => x.id === bookingId);
-    if (!b || !b.email || !(state.integration && state.integration.email)) return null;
+    if (!b || b.archived || !b.email || !(state.integration && state.integration.email)) return null;
     if (b.lastLinkResend && ctx.now - b.lastLinkResend < 10 * MIN) return null;
     b.lastLinkResend = ctx.now;
     return queueEmail(state, ctx, b, b.status === 'waitlisted' ? 'waitlist' : (b.status === 'offered' ? 'offer' : 'confirmation'), 'System (repeat booking attempt)');
@@ -1071,6 +1227,8 @@
     for (const m of state.messages) {
       if (out.length >= (max || 20)) break;
       if (m.channel !== 'email') continue;
+      const recipient = state.bookings.find(b => b.id === m.bookingId);
+      if (recipient && (recipient.archived || (m.type === 'certificate' && m.certificateId && (!currentCert(state, recipient) || currentCert(state, recipient).id !== m.certificateId))) && ['queued', 'sending'].includes(m.status)) { m.status = 'cancelled'; continue; }
       if (m.status === 'queued' || (m.status === 'sending' && ctx.now - (m.claimedAt || 0) > 2 * MIN)) { m.status = 'sending'; m.claimedAt = ctx.now; out.push(m.id); }
     }
     return out;
@@ -1083,7 +1241,7 @@
     m.history.push({ status: m.status, at: ctx.now, by: 'Email (automatic)' + (ok ? '' : ': ' + m.error) });
     return m;
   }
-  const MSG_STATUS = { prepared: 'Prepared', 'manually-shared': 'Manually shared', queued: 'Email waiting to send', sending: 'Email sending', sent: 'Sent', failed: 'Email not sent', delivered: 'Delivery confirmed' };
+  const MSG_STATUS = { accepted: 'Accepted by WhatsApp (delivery not confirmed)', unknown: 'Sending uncertain — review before retry', cancelled: 'Cancelled', prepared: 'Prepared', 'manually-shared': 'Manually shared', queued: 'Waiting to send', sending: 'Sending', sent: 'Sent', failed: 'Not sent', delivered: 'Delivery confirmed' };
   function setMessageStatus(state, ctx, actor, msgId, status) {
     const s = need(state, actor, 'message.status');
     const m = state.messages.find(x => x.id === msgId);
@@ -1193,7 +1351,7 @@
   // ---------- dashboard ----------
   function stats(state) {
     const c = capacity(state);
-    const active = state.bookings.filter(b => b.status === 'confirmed');
+    const active = state.bookings.filter(b => b.status === 'confirmed' && !b.archived);
     const certs = { released: 0, ready: 0, blocked: 0 };
     for (const b of active) certs[certStatus(state, b).key === 'released' ? 'released' : certStatus(state, b).key]++;
     const exceptions = state.bookings.reduce((n, b) => n + b.exceptions.filter(x => !x.resolved).length, 0)
@@ -1220,11 +1378,12 @@
     SCHEMA, RuleError, PROFESSIONS, CHANNELS, ROLES, PERMS, SURVEY, STATUS_LABEL, MSG_STATUS,
     defaultEvent, contactsOf, contactText, createState, times, localDate, fmt, fmtTime, fmtDate, isEventDay, normPhone,
     login, logout, staffFor, can, need, capacity, checkInvariants, waitlist, publicSummary,
-    validateAttendee, findDuplicates, createBooking, updateDetails, cancelBooking, isLocked,
+    updateContact, validateAttendee, findDuplicates, createBooking, updateDetails, cancelBooking, isLocked,
     offerWindow, makeOffer, respondToOffer, processExpiries, confirmLate, allocateContingencyFor, releaseUnused, reinstate,
     parseQr, qrPayload, recordArrival, undoArrival, confirmCompletion, recordEarlyDeparture, reviewEarlyDeparture, undoCompletion, completed,
     flagException, resolveException, resolveDuplicate, resolveHpcna, markDetailsChecked,
     validateFeedback, submitFeedback, recordPaperFeedback, addPaperResponse, feedbackSummary,
+    synchronizeCertificates, applyPostEventUpdate, archiveNoShows, restoreArchived, certificateEvent, sendAllCertificates, sendCertificateWhatsApp, claimWhatsApps, markWhatsAppResult, retryWhatsApp,
     approvalComplete, blockers, certStatus, currentCert, releaseCertificate, releaseAllReady, correctCertificate, certByToken,
     messageText, prepareMessage, setMessageStatus, queueEmailResend, queueLinkResend, claimEmails, markEmailResult,
     updateEvent, updateApproval, updateSignatory, addStaff, setStaffActive, resetPin, setLogo, setPresenterPhoto,

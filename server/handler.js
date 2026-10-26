@@ -26,7 +26,7 @@ const STAFF_FNS = new Set([
   'releaseUnused', 'reinstate', 'recordArrival', 'undoArrival', 'confirmCompletion', 'recordEarlyDeparture', 'reviewEarlyDeparture',
   'undoCompletion', 'flagException', 'resolveException', 'resolveDuplicate', 'resolveHpcna', 'markDetailsChecked', 'submitFeedback',
   'recordPaperFeedback', 'addPaperResponse', 'releaseCertificate', 'releaseAllReady', 'correctCertificate', 'prepareMessage',
-  'setMessageStatus', 'updateEvent', 'updateApproval', 'updateSignatory', 'addStaff', 'setStaffActive', 'setLogo', 'setPresenterPhoto', 'queueEmailResend'
+  'setMessageStatus', 'updateEvent', 'updateApproval', 'updateSignatory', 'addStaff', 'setStaffActive', 'setLogo', 'setPresenterPhoto', 'updateContact', 'queueEmailResend', 'applyPostEventUpdate', 'archiveNoShows', 'restoreArchived', 'sendAllCertificates', 'sendCertificateWhatsApp', 'retryWhatsApp'
 ]);
 const MAX_CALLS = 120;
 const MAX_BODY = 2_000_000;
@@ -79,6 +79,7 @@ export function createHandler(deps) {
   const clock = deps.clock || (() => Date.now());
   const random = deps.random || cryptoRandom;
   const emailOn = typeof deps.sendEmail === 'function';
+  const whatsappOn = typeof deps.sendWhatsApp === 'function';
   const siteUrl = (deps.siteUrl || '').replace(/#.*$/, '');
   let ready = null;
 
@@ -164,6 +165,8 @@ export function createHandler(deps) {
         }
       }
     }
+    v.certificateLayouts = {};
+    for (const cert of v.certificates) if (cert.layoutId && state.certificateLayouts) v.certificateLayouts[cert.layoutId] = state.certificateLayouts[cert.layoutId];
     return v;
   }
 
@@ -191,6 +194,7 @@ export function createHandler(deps) {
         const r = CPD[c.fn](state, ctx, ...c.args);
         results.push(r === undefined ? null : JSON.parse(JSON.stringify(r)));
       }
+      CPD.synchronizeCertificates(state, ctx);
       CPD.checkInvariants(state);
       return results;
     } finally { state.sessions = {}; }
@@ -201,7 +205,7 @@ export function createHandler(deps) {
       const [row] = await tx`select state, rev from public.app_state where id = ${ROW_ID} for update`;
       const state = row.state;
       state.rev = row.rev;
-      state.integration = Object.assign({}, state.integration, { email: emailOn });
+      state.integration = Object.assign({}, state.integration, { email: emailOn, whatsapp: whatsappOn });
       const out = await fn(state);
       if (out && out.save) {
         const rev = row.rev + 1;
@@ -219,7 +223,10 @@ export function createHandler(deps) {
     const cert = CPD.currentCert(state, b);
     return { manage: siteUrl + '#m-' + b.token, feedback: siteUrl + '#f-' + b.token, certificate: cert ? siteUrl + '#c-' + cert.token : '' };
   }
-  const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms))]);
+  function withTimeout(p, ms) {
+    let timer;
+    return Promise.race([p, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timed out')), ms); })]).finally(() => clearTimeout(timer));
+  }
   async function deliverEmails() {
     if (!emailOn) return;
     const claimed = await withLockedState(st => { const ids = CPD.claimEmails(st, { now: clock(), rand: random }, 20); return { save: ids.length > 0, ids, st }; });
@@ -237,6 +244,24 @@ export function createHandler(deps) {
     }
     await withLockedState(st => { for (const r of results) CPD.markEmailResult(st, { now: clock(), rand: random }, r.id, r.ok, r.error); return { save: true }; });
   }
+  async function deliverWhatsApps() {
+    if (!whatsappOn) return;
+    const claimed = await withLockedState(st => { const ids = CPD.claimWhatsApps(st, {now: clock(), rand: random}, 120); return {save: ids.length > 0, ids, st}; });
+    const results = [];
+    let next = 0;
+    async function worker() {
+      while (next < claimed.ids.length) {
+        const id = claimed.ids[next++], m = claimed.st.messages.find(x => x.id === id), b = claimed.st.bookings.find(x => x.id === m.bookingId);
+        let result;
+        try { result = await withTimeout(deps.sendWhatsApp({to: m.to, name: CPD.fullName(b), topic: claimed.st.event.topic, url: linksFor(claimed.st, b).certificate}), 20000); }
+        catch (e) { result = {ok: false, unknown: true, error: 'Response uncertain; check WhatsApp before retrying.'}; }
+        results.push({id, result});
+      }
+    }
+    await Promise.all(Array.from({length: Math.min(5, claimed.ids.length)}, worker));
+    if (results.length) await withLockedState(st => { for (const r of results) CPD.markWhatsAppResult(st, {now: clock(), rand: random}, r.id, r.result); return {save: true}; });
+  }
+  async function deliverMessages() { await Promise.all([deliverEmails(), deliverWhatsApps()]); }
   function afterReply(p) {
     const safe = p.catch(e => console.error('email delivery', e));
     if (deps.background) { deps.background(safe); return Promise.resolve(); }
@@ -282,6 +307,17 @@ export function createHandler(deps) {
           state = (await withLockedState(st => { const n = CPD.processExpiries(st, { now, rand: random }); return { save: n > 0, state: st }; })).state;
         }
         const who = { email: id.email, staff: staffByEmail(state, id.email) };
+        if (who.staff) {
+          state = (await withLockedState(st => {
+            const before = JSON.stringify(st);
+            st.sessions = { __view: { staffId: who.staff.id } };
+            if (who.staff.role === 'admin') CPD.applyPostEventUpdate(st, { now, rand: random }, {session: '__view'});
+            else CPD.synchronizeCertificates(st, { now, rand: random });
+            st.sessions = {};
+            return {save: before !== JSON.stringify(st), state: st};
+          })).state;
+          await afterReply(deliverMessages());
+        }
         return json({ ok: true, view: viewFor(state, who, token, now) });
       }
 
@@ -303,14 +339,14 @@ export function createHandler(deps) {
         if (out.error) {
           if (out.error.code === 'already_booked' && out.error.bookingId && emailOn) {
             await withLockedState(st => { const m = CPD.queueLinkResend(st, { now, rand: random }, out.error.bookingId); return { save: !!m }; });
-            await afterReply(deliverEmails());
+            await afterReply(deliverMessages());
             out.error.message += ' We have emailed your booking link to that address again (it may take a few minutes; please also check your spam folder).';
           } else if (out.error.code === 'already_booked') {
             out.error.message += ' Please use the link in your confirmation, or contact us.';
           }
           return json(ruleError(out.error));
         }
-        await afterReply(deliverEmails());
+        await afterReply(deliverMessages());
         // after a public booking, show the attendee their own booking
         let tk = token;
         if (!out.who.staff && !tk) { const b = out.results.find(r => r && r.token && r.ref); if (b) tk = { kind: 'booking', value: b.token }; }

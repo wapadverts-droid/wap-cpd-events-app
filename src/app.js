@@ -92,7 +92,7 @@
   async function run(fn, okMsg, opts) {
     opts = opts || {};
     try {
-      const r = await A.store.transact(st => { const c = ctx(); C.processExpiries(st, c); return fn(st, c); }, A.state);
+      const r = await A.store.transact(st => { const c = ctx(); C.processExpiries(st, c); const result = fn(st, c); if (!isRemote()) C.synchronizeCertificates(st, c); return result; }, A.state);
       A.state = r.state;
       if (opts.form) delete A.forms[opts.form];
       if (okMsg) toast(typeof okMsg === 'function' ? okMsg(r.result) : okMsg, 'ok');
@@ -159,7 +159,7 @@
   }
   const logo = () => E().logo || window.WAP_LOGO || '';
   const contactsHtml = sep => C.contactsOf(E()).map(c => [c.phone ? `<span class="mono" style="white-space:nowrap">${esc(c.phone)}</span>` : '', c.email ? `<span class="mono">${esc(c.email)}</span>` : ''].filter(Boolean).join(' · ')).join(sep || ', or ');
-  const CERT_NOTE = 'To receive your certificate, attend the full session and complete the evaluation.';
+  const CERT_NOTE = 'To receive your certificate, have your session attendance confirmed by staff.';
   const ICON = {
     date: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
     time: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
@@ -249,7 +249,7 @@
   }
   function footer() {
     const staff = isStaffView();
-    const ops = staff ? `<p class="foot-ops">${isRemote() ? '' : 'Practice mode: data stays on this device. '}${emailOn() ? 'Confirmation, waiting-list and offer emails are sent automatically; WhatsApp messages are prepared for staff to send.' : 'Messages are prepared for staff to send; nothing is sent automatically.'} Certificates are not valid until HPCNA approval details are entered and the administrator releases them.</p>` : '';
+    const ops = staff ? `<p class="foot-ops">${isRemote() ? '' : 'Practice mode: data stays on this device. '}${emailOn() || (S().integration && S().integration.whatsapp) ? 'Connected email and WhatsApp services send queued messages automatically. Check Certificates for WhatsApp setup and sending status.' : 'Messages are prepared for staff to send; nothing is sent automatically.'} Certificates issue automatically after confirmed session attendance and required checks. Surveys are optional.</p>` : '';
     return `<footer class="foot">${esc(E().provider)} · CPD provider ${esc(E().providerNumber)}<br>Questions: ${contactsHtml()}${ops}
       ${PERSISTENT || isRemote() ? '' : '<br><b>Browser storage is blocked: changes will be lost when you close this page.</b>'}
       ${staff || me() ? '' : '<p class="foot-staff"><a href="#staff">Staff sign-in</a></p>'}</footer>`;
@@ -295,7 +295,7 @@
       if (!me()) { if (h !== 'staff') A.afterLogin = h; return vLogin(); }
       if (h === 'staff') { history.replaceState(null, '', '#s-dash'); return staffFrame('dash', vDash()); }
       const map = { 's-dash': vDash, 's-people': vPeople, 's-checkin': vCheckin, 's-waitlist': vWaitlist, 's-register': vRegister, 's-certs': vCerts,
-        's-feedback': vFeedbackStaff, 's-messages': vMessages, 's-paper': vPaper, 's-data': vData, 's-settings': vSettings };
+        's-archived': vArchived, 's-more': vMore, 's-feedback': vFeedbackStaff, 's-messages': vMessages, 's-paper': vPaper, 's-data': vData, 's-settings': vSettings };
       if (h.startsWith('s-p-')) return staffFrame('people', vPerson(h.slice(4)));
       const key = h.slice(2);
       const fn = map[h] || vDash;
@@ -305,13 +305,26 @@
   }
 
   function staffFrame(active, inner) {
-    const st = C.stats(S()), s = me();
-    const items = [['dash', 'Dashboard'], ['people', 'Attendees'], ['checkin', 'Check-in & completion'], ['waitlist', 'Waiting list & places', st.waitlisted + st.pendingOffers],
-      ['register', 'Register attendee'], ['certs', 'Certificates'], ['feedback', 'Feedback'], ['messages', 'Messages'], ['paper', 'Paper forms & PDFs'], ['data', 'Exports & audit'],
-      ['settings', 'Settings']];
-    const nav = items.filter(i => i[0] !== 'settings' || can('settings.edit')).map(i => `<a href="#s-${i[0]}" class="${active === i[0] ? 'on' : ''}">${i[1]}${i[2] ? `<span class="count" style="background:var(--warn-bg);color:var(--warn)">${i[2]}</span>` : ''}${i[0] === 'dash' && st.exceptions ? `<span class="count">${st.exceptions}</span>` : ''}</a>`).join('');
-    return { title: inner.title, after: inner.after, html: `<div class="staff-layout"><nav class="sidenav" aria-label="Staff sections">${nav}
-      <div class="who">Signed in as <b>${esc(s.name)}</b><br><span class="muted">${C.ROLES[s.role]}</span></div></nav><div class="stack" style="min-width:0">${inner.html}</div></div>` };
+    const s = me();
+    const items = [['dash','Overview'], ['people','Attendees'], ['certs','Certificates'], ['settings','Settings'], ['more','More']];
+    const secondary = !items.some(i => i[0] === active) && active !== 'register';
+    const nav = items.filter(i => i[0] !== 'settings' || can('settings.edit')).map(i => `<a href="#s-${i[0]}" class="${active === i[0] || (i[0] === 'people' && active === 'register') || (i[0] === 'more' && secondary) ? 'on' : ''}">${i[1]}</a>`).join('');
+    return {title: inner.title, after: inner.after, html: `<div class="staff-layout"><nav class="sidenav" aria-label="Staff sections">${nav}<div class="who">Signed in as <b>${esc(s.name)}</b><br>${C.ROLES[s.role]}</div></nav><div class="stack" style="min-width:0">${inner.html}</div></div>`};
+  }
+  function vMore() {
+    const items = [['feedback','Surveys','Send personal evaluation links and review feedback.'], ['archived','Archived / No-shows','Find and restore absent or archived bookings.'], ['messages','Message history','Check sending statuses and prepared messages.'], ['data','Reports & audit','Export records, back up data and inspect history.'], ['paper','Paper forms & PDFs','Download registers and paper forms.'], ['checkin','Event check-in','Arrival and session completion tools.'], ['waitlist','Bookings & waiting list','Booking controls for event-day staff.']];
+    return {title:'More', html:`<div class="page-head"><div><h1>More</h1><p>Supporting tools and event history.</p></div></div><div class="grid2">${items.map(([key,title,note]) => `<a class="panel stack-s" href="#s-${key}"><h2>${title}</h2><p>${note}</p></a>`).join('')}</div>`};
+  }
+  function deliveryLabel(b) {
+    const cert = C.currentCert(S(), b);
+    if (!cert) return 'Not issued';
+    const messages = S().messages.filter(m => m.bookingId === b.id && m.type === 'certificate' && m.channel === 'whatsapp' && (!m.certificateId || m.certificateId === cert.id));
+    const m = messages[messages.length - 1];
+    return m ? (C.MSG_STATUS[m.status] || m.status) : (b.phoneIntl ? 'Ready to send' : 'Mobile number needed');
+  }
+  function vArchived() {
+    const list = S().bookings.filter(b => b.archived);
+    return {title:'Archived / No-shows', html:`<div class="page-head"><div><h1>Archived / No-shows</h1><p>${list.length} preserved records. No certificates or survey reminders are sent to this list.</p></div><a class="btn" href="#s-people">Back to attendees</a></div><section class="panel"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>HPCNA number</th><th>Reason</th><th>Action</th></tr></thead><tbody>${list.map(b => `<tr><td><a href="#s-p-${b.id}">${nameOf(b)}</a></td><td>${esc(b.hpcna)}</td><td>${esc(b.archived.reason)}</td><td>${can('booking.archive') ? `<button class="btn btn-s" data-act="restore-archived" data-id="${b.id}">Restore</button>` : ''}</td></tr>`).join('')}</tbody></table></div>${list.length ? '' : '<p>No archived bookings.</p>'}</section>`};
   }
 
   // ---------- PUBLIC: home ----------
@@ -444,8 +457,8 @@
       ${step(b.status === 'confirmed', 'Booked', b.status === 'confirmed' ? 'Place confirmed' : C.STATUS_LABEL[b.status], b.status === 'confirmed' ? 'done' : 'wait')}
       ${step(!!b.arrival, 'Arrived', b.arrival ? FT(b.arrival.at) : 'Give your name at the desk')}
       ${step(C.completed(b), 'Completed', comp ? ({ confirmed: 'Confirmed ' + FT(comp.at), 'early-pending': 'Under review', 'early-approved': 'Approved', 'early-rejected': 'Not accepted' }[comp.status]) : 'Confirmed at end of Q&A', comp && comp.status === 'early-pending' ? 'wait' : (comp && comp.status === 'early-rejected' ? 'bad' : ''))}
-      ${step(!!b.feedback, 'Evaluation', b.feedback ? 'Received' : 'Required for certificate', b.feedback ? 'done' : (C.completed(b) ? 'bad' : ''))}
-      ${step(cs.key === 'released', 'Certificate', cs.key === 'released' ? 'Ready to download' : 'After checks and release')}
+      ${step(!!b.feedback, 'Evaluation', b.feedback ? 'Received' : 'Optional survey', b.feedback ? 'done' : '')}
+      ${step(cs.key === 'released', 'Certificate', cs.key === 'released' ? 'Ready to download' : 'After attendance and checks')}
     </div>`;
   }
   function vManage(token) {
@@ -520,7 +533,7 @@
     const b = C.bookingByToken(S(), token), t = T(), n = now();
     if (!b) return { title: 'Evaluation', html: `<div class="narrow panel"><h1>Link not valid</h1><p>This evaluation link is not valid${isRemote() ? '' : ' on this device'}.</p></div>` };
     const head = `<div><div class="eyebrow">CPD Evaluation Survey</div><h1>${esc(E().topic)}</h1><p class="muted">${esc(E().provider)} – Clinical Update · ${esc(C.fmtDate(t.eventStart, tz()))}</p></div>`;
-    if (b.feedback) return { title: 'Evaluation', html: `<div class="narrow stack">${head}<div class="alert ok"><div><b>Thank you, ${esc(b.firstName)}. Your evaluation has been received.</b> Your certificate will be available after the remaining checks and release by the administrator.</div></div><a class="btn" href="#m-${esc(token)}">Back to my booking</a></div>` };
+    if (b.feedback) return { title: 'Evaluation', html: `<div class="narrow stack">${head}<div class="alert ok"><div><b>Thank you, ${esc(b.firstName)}. Your evaluation has been received.</b> Your certificate is available after confirmed session attendance and the required checks. This survey does not delay issuance.</div></div><a class="btn" href="#m-${esc(token)}">Back to my booking</a></div>` };
     if (b.status !== 'confirmed') return { title: 'Evaluation', html: `<div class="narrow stack">${head}<div class="alert bad"><div>The evaluation is for booked attendees.</div></div></div>` };
     if (n < t.feedbackOpen) return { title: 'Evaluation', html: `<div class="narrow stack">${head}<div class="alert info"><div>The evaluation opens at <b>${F(t.feedbackOpen)}</b>, after the presentation.</div></div><a class="btn" href="#m-${esc(token)}">Back to my booking</a></div>` };
     if (n > t.feedbackClose) return { title: 'Evaluation', html: `<div class="narrow stack">${head}<div class="alert bad"><div>The online evaluation has closed. Please contact us: ${contactsHtml()}.</div></div></div>` };
@@ -532,25 +545,25 @@
 
   // ---------- certificate preview ----------
   function certSheet(b, cert) {
-    const e = E(), approval = cert ? cert.approval : e.approval;
+    const e = C.certificateEvent(S(), cert), approval = cert ? cert.approval : e.approval;
     const sample = !C.approvalComplete({ approval });
     const snap = cert ? cert.snapshot : { firstName: b.firstName, lastName: b.lastName, hpcna: b.hpcna || (b.hpcnaStatus === 'provided' ? '' : 'Not provided') };
     const demo = isDemoData();
     const wm = sample ? 'SAMPLE — NOT VALID FOR CPD' : (!cert ? 'PREVIEW — NOT ISSUED' : '');
-    const dateStr = C.fmt(T().eventStart, tz(), { day: 'numeric', month: 'long', year: 'numeric' });
+    const dateStr = C.fmt(C.times(e).eventStart, e.timezone, { day: 'numeric', month: 'long', year: 'numeric' });
     const blank = s => esc(s) || '______________';
     return `<div class="cert-sheet" role="img" aria-label="Certificate preview for ${nameOf(snap)}"><div class="frame">
       <div class="c1">${esc(e.provider).toUpperCase()}</div><div class="c2">CERTIFICATE OF ATTENDANCE</div>
       <div class="c3">${sample ? 'SAMPLE — NOT VALID FOR CPD' : (!cert ? 'PREVIEW — NOT ISSUED' : '')}</div>
       <div class="c4">This certifies that</div><div class="nm">${esc(snap.firstName + ' ' + snap.lastName)}</div><div class="c4" style="margin-top:0.3cqw">Participant name</div>
       <div class="c4">HPCNA registration number: ${blank(snap.hpcna)}</div><div class="c4">attended the CPD activity</div>
-      <div class="tp">${esc(e.topic)}</div><div class="c4" style="margin-top:0">${esc(dateStr)} | ${esc(e.venueShort)}</div>
+      <div class="tp">${esc(e.topic)}</div><div class="c4" style="margin-top:0">Date of event: ${esc(dateStr)} | ${esc(e.venueShort)}</div>
       <div class="c4">Provider accreditation number: ${esc(e.providerNumber)}</div>
       <div class="c4" style="margin-top:0">Activity accreditation number: ${blank(approval.activityNumber)}</div>
       <div class="c4" style="margin-top:0">Approved CEUs: ${blank(approval.ceus)} &nbsp; Level: ${blank(approval.level)}</div>
       ${sample ? '<div style="font-size:1cqw;margin-top:0.6cqw">Activity number, CEUs and level to be completed following HPCNA approval.</div>' : ''}
       </div>
-      <div class="sigs"><div>${e.signatory && e.signatory.image && cert ? `<img src="${esc(e.signatory.image)}" alt="Signature" style="position:absolute;bottom:110%;left:5%;max-height:4cqw">` : ''}Authorised provider signature${e.signatory && e.signatory.name ? `<br>${esc(e.signatory.name)}${e.signatory.title ? ', ' + esc(e.signatory.title) : ''}` : ''}</div>
+      <div class="sigs"><div>${e.signatory && e.signatory.image ? `<img src="${esc(e.signatory.image)}" alt="Signature" style="position:absolute;bottom:110%;left:5%;max-height:4cqw">` : ''}Authorised provider signature${e.signatory && e.signatory.name ? `<br>${esc(e.signatory.name)}${e.signatory.title ? ', ' + esc(e.signatory.title) : ''}` : ''}</div>
         <div>${cert ? `<span class="dt">${esc(C.fmt(cert.issuedAt, tz(), { day: 'numeric', month: 'long', year: 'numeric' }))}</span>` : ''}Date of issue</div></div>
       <div class="no">${cert ? `Certificate no. ${esc(cert.number)}${cert.version > 1 ? ' (version ' + cert.version + ')' : ''} · Verification code ${esc(cert.verify)} · Booking ${esc(cert.ref)}` : `Booking ${esc(b.ref)} · not an issued certificate`}</div>
       ${wm ? `<div class="wm"><span>${wm}</span></div>` : ''}${demo ? '<div class="wm demo"><span>FICTIONAL DEMO — NOT VALID</span></div>' : ''}
@@ -653,63 +666,21 @@
     return { k: 'info', txt: `The event has ended. Complete paper entries, evaluations and certificate checks.` };
   }
   function vDash() {
-    const st = C.stats(S()), e = E(), t = T(), n = now(), s = me();
-    const ph = phaseText();
-    const tile = (label, val, cap, note) => `<div class="tile"><span class="eyebrow">${label}</span><span class="v">${val}${cap != null ? `<small> / ${cap}</small>` : ''}</span>
-      ${cap ? `<div class="meter ${val >= cap ? 'full' : ''}"><i style="width:${Math.min(100, 100 * val / cap).toFixed(1)}%"></i></div>` : ''}${note ? `<span class="small muted">${note}</span>` : ''}</div>`;
-    const alerts = [];
-    const B = S().bookings;
-    const early = B.filter(b => b.completion && b.completion.status === 'early-pending');
-    const dups = B.filter(b => ['confirmed', 'waitlisted', 'offered'].includes(b.status) && b.flags.duplicate && !b.flags.duplicate.resolved);
-    const hp = B.filter(b => ['confirmed', 'waitlisted', 'offered'].includes(b.status) && b.flags.hpcnaReview && !b.flags.hpcnaReview.resolved);
-    const exc = B.filter(b => b.exceptions.some(x => !x.resolved && x.type !== 'early-departure'));
-    const alertRow = (k, html, actionHtml) => `<div class="alert ${k}"><div>${html}</div>${actionHtml || ''}</div>`;
-    const peopleBtn = (flag, label) => `<button class="btn btn-s" data-act="filter-people" data-flag="${flag}">${label}</button>`;
-    if (early.length) alerts.push(alertRow('bad', `<b>${early.length} early departure${early.length > 1 ? 's' : ''}</b> waiting for administrator review.`, peopleBtn('early', 'Review')));
-    if (dups.length) alerts.push(alertRow('warn', `<b>${dups.length} possible duplicate booking${dups.length > 1 ? 's' : ''}</b> to review (administrator).`, peopleBtn('duplicate', 'Show')));
-    if (hp.length) alerts.push(alertRow('warn', `<b>${hp.length} missing HPCNA number${hp.length > 1 ? 's' : ''}</b> to review (administrator).`, peopleBtn('hpcna', 'Show')));
-    if (exc.length) alerts.push(alertRow('warn', `<b>${exc.length} attendee${exc.length > 1 ? 's' : ''} with open exceptions</b> flagged for administrator review.`, peopleBtn('exception', 'Show')));
-    const offers = B.filter(b => b.status === 'offered').sort((a, b) => a.offer.expiresAt - b.offer.expiresAt);
-    if (offers.length) alerts.push(alertRow('info', `<b>${offers.length} pending offer${offers.length > 1 ? 's' : ''}</b> holding places. Next expiry: ${F(offers[0].offer.expiresAt)}.`, `<a class="btn btn-s" href="#s-waitlist">Open</a>`));
-    const w = C.offerWindow(S(), n);
-    if (st.waitlisted && st.publicFree) alerts.push(alertRow('warn', `<b>${st.publicFree} place${st.publicFree > 1 ? 's' : ''} free and ${st.waitlisted} waiting.</b> ${w.ok ? 'Make the next waiting-list offer.' : 'Too late for normal offers — confirm late cases at the desk.'}`, `<a class="btn btn-s" href="#s-waitlist">Waiting list</a>`));
-    if (n >= t.presentationStart && n <= t.eventEnd && st.noShows) alerts.push(alertRow('info', `<b>${st.noShows} booked attendee${st.noShows > 1 ? 's have' : ' has'} not arrived.</b> The presentation has started, so the administrator may release unused places${st.waitlisted ? ` for the ${st.waitlisted} waiting` : ''}.`, `<a class="btn btn-s" href="#s-waitlist">Release places</a>`));
-    const compNoFb = B.filter(b => b.status === 'confirmed' && C.completed(b) && !b.feedback).length;
-    if (compNoFb) alerts.push(alertRow('warn', `<b>${compNoFb} completed attendee${compNoFb > 1 ? 's have' : ' has'} no evaluation recorded.</b> NO FEEDBACK, NO CERTIFICATE.`, `<a class="btn btn-s" href="#s-feedback">Follow up</a>`));
-    if (!C.approvalComplete(e)) alerts.push(alertRow('info', `<b>HPCNA approval details not entered.</b> All certificate previews show “SAMPLE — NOT VALID FOR CPD”.`, can('approval.edit') ? `<a class="btn btn-s" href="#s-certs">Enter details</a>` : ''));
-    if (st.certs.ready) alerts.push(alertRow('ok', `<b>${st.certs.ready} certificate${st.certs.ready > 1 ? 's' : ''} ready for release.</b>`, `<a class="btn btn-s" href="#s-certs">Certificates</a>`));
-    if (!PERSISTENT) alerts.push(alertRow('bad', '<b>Browser storage is blocked.</b> Changes are kept only until this page closes.'));
-    // blocker summary
-    const counts = {};
-    for (const b of B.filter(x => x.status === 'confirmed')) for (const bl of C.certStatus(S(), b).blockers) counts[bl.code] = (counts[bl.code] || 0) + 1;
-    const blkLabels = { no_arrival: 'No arrival', no_completion: 'Completion not confirmed', early_pending: 'Early departure in review', early_rejected: 'Attendance not accepted', no_feedback: 'No feedback', duplicate: 'Duplicate review', hpcna: 'HPCNA number review', details: 'Details not checked', exception: 'Open exception', approval: 'Approval details missing' };
-    const blkRows = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<div class="bar"><span style="width:190px;flex:none">${blkLabels[k] || k}</span><div class="meter"><i style="width:${(100 * v / Math.max(1, st.booked)).toFixed(1)}%;background:var(--bad)"></i></div><span class="tnum" style="width:30px;text-align:right">${v}</span></div>`).join('');
-    const fstep = (label, v, of) => `<div class="step"><span class="small muted">${label}</span><b>${v}</b><span class="small muted">${of != null && of ? Math.round(100 * v / of) + '%' : ''}</span></div>`;
-    return { title: 'Dashboard', html: `
-      <div class="page-head"><div><div class="eyebrow">${esc(e.title)}</div><h1>Dashboard</h1><p>${esc(C.fmtDate(t.eventStart, tz()))} · ${esc(e.venueShort)}</p></div>
-        <div class="row"><a class="btn btn-primary" href="#s-checkin">Check-in</a><a class="btn" href="#s-register">Register attendee</a></div></div>
-      <div class="alert ${ph.k}"><div>${esc(ph.txt)}</div></div>
-      <div class="tiles">
-        ${tile('Advance-booking places', st.publicUsed, st.publicCap, st.pendingOffers ? `${st.publicConfirmed} booked + ${st.pendingOffers} offer pending` : `${st.publicFree} free`)}
-        ${tile('Contingency places', st.contingencyUsed, st.contingencyCap, 'Administrator allocation only')}
-        ${tile('Total places held', st.total, st.maxCap, `${st.totalFree} left of maximum`)}
-        ${tile('Waiting list', st.waitlisted, null, st.pendingOffers ? `${st.pendingOffers} offer(s) pending` : 'No pending offers')}
-      </div>
-      <section class="panel"><h2>Attendance and certificate progress</h2>
-        <div class="funnel">${fstep('Booked', st.booked)}${fstep('Arrived', st.arrived, st.booked)}${fstep('Completed', st.completed, st.booked)}${fstep('Feedback recorded', st.feedback, st.booked)}${fstep('Certificates released', st.certs.released, st.booked)}</div>
-        <p class="small muted" style="margin-top:8px">Certificates: ${st.certs.released} released · ${st.certs.ready} ready · ${st.certs.blocked} blocked. Arrival alone does not confirm completion.</p></section>
-      <div class="grid2">
-        <section class="panel"><h2>Needs attention</h2><div class="alerts">${alerts.join('') || '<div class="empty">Nothing needs attention right now.</div>'}</div></section>
-        <section class="panel"><h2>What blocks certificates</h2><p class="small muted" style="margin-bottom:10px">Booked attendees affected by each condition. One person can have several.</p>
-          <div class="stack-s">${blkRows || '<div class="empty">No blockers.</div>'}</div></section>
-      </div>
-      <p class="small muted">Signed in as ${esc(s.name)} (${C.ROLES[s.role]}). ${s.role === 'pa' ? 'Administrator-only actions are hidden and also refused by the rules.' : ''}</p>` };
+    const list = S().bookings.filter(b => !b.archived && b.status === 'confirmed');
+    const attended = list.filter(C.completed), issued = list.filter(b => C.currentCert(S(), b));
+    const needs = list.filter(b => C.blockers(S(), b).length && !C.currentCert(S(), b));
+    const archived = S().bookings.filter(b => b.archived).length;
+    const card = (label, count, href) => `<a class="panel stack-s" href="${href}"><span class="small muted">${label}</span><strong style="font-size:36px">${count}</strong></a>`;
+    return {title:'Overview', html:`<div class="page-head"><div><div class="eyebrow">${esc(E().topic)} · ${esc(E().date)}</div><h1>Event overview</h1><p>Add attendee → Confirm attended → Certificate issued and sent.</p></div><a class="btn btn-primary" href="#s-register">Add attendee</a></div>
+      <div class="grid2">${card('Confirmed session attendance',attended.length,'#s-people')}${card('Certificates issued',issued.length,'#s-certs')}${card('Needs attention',needs.length,'#s-people')}${card('Archived / No-shows',archived,'#s-archived')}</div>
+      <section class="panel stack-s"><h2>Next steps</h2><p>Certificates issue automatically after confirmed session attendance when attendee details, signature and approval checks are complete. The survey is optional.</p><div class="row"><a class="btn btn-primary" href="#s-people">Review attendees</a><a class="btn" href="#s-certs">Send certificates</a><a class="btn" href="#s-feedback">Survey follow-up</a></div></section>
+      <section class="panel stack-s"><h2>Certificate delivery</h2><p>${S().integration && S().integration.whatsapp ? 'WhatsApp Business is connected. Eligible certificate messages are sent automatically.' : 'WhatsApp Business is not connected. Use the prepared WhatsApp messages to send each certificate yourself.'} ${emailOn() ? 'Certificate emails are also queued automatically.' : ''}</p><p class="small muted">A WhatsApp acceptance status means the service accepted the request; recipient delivery is not confirmed by this app.</p></section>
+      ${needs.length ? `<section class="panel stack-s"><h2>Needs attention</h2>${needs.slice(0,8).map(b => `<a href="#s-p-${b.id}"><b>${nameOf(b)}</b> · ${esc(C.blockers(S(),b)[0].label)}</a>`).join('')}</section>` : ''}`};
   }
 
-  // ---------- STAFF: attendees ----------
   function filterPeople() {
     const u = A.ui, q = u.q.trim().toLowerCase();
-    let list = S().bookings.slice();
+    let list = S().bookings.filter(b => !b.archived);
     if (q) list = list.filter(b => [b.firstName + ' ' + b.lastName, b.lastName + ' ' + b.firstName, b.ref, b.phone, b.phoneIntl, b.email, b.hpcna].join(' ').toLowerCase().includes(q));
     if (u.status !== 'all') list = list.filter(b => u.status === 'inactive' ? ['cancelled', 'declined', 'expired', 'released'].includes(b.status) : b.status === u.status);
     const cs = b => C.certStatus(S(), b).key;
@@ -726,20 +697,10 @@
   function chips(group, opts) { return `<div class="chips" role="group">${opts.map(([v, l]) => `<button class="chipbtn ${A.ui[group] === v ? 'on' : ''}" data-act="chip" data-group="${group}" data-val="${v}">${l}</button>`).join('')}</div>`; }
   function vPeople() {
     const list = filterPeople();
-    const rows = list.map(b => `<tr class="click" data-act="open-person" data-id="${b.id}"><td><b>${nameOf(b)}</b><div class="small muted">${profOf(b)}</div></td><td class="mono small">${esc(b.ref)}</td>
-      <td>${pBooking(b)}</td><td>${b.status === 'confirmed' ? pArr(b) : ''}</td><td>${b.status === 'confirmed' ? pComp(b) : ''}</td><td>${b.status === 'confirmed' ? pFb(b) : ''}</td><td>${b.status === 'confirmed' ? pCert(b) : ''}</td><td>${flagPills(b)}</td></tr>`).join('');
-    const cards = list.map(b => `<button class="card" data-act="open-person" data-id="${b.id}"><div class="row-between"><b>${nameOf(b)}</b><span class="mono small">${esc(b.ref)}</span></div>
-      <div class="row">${pBooking(b)} ${b.status === 'confirmed' ? pArr(b) + pComp(b) + pFb(b) + pCert(b) : ''} ${flagPills(b)}</div></button>`).join('');
-    return { title: 'Attendees', html: `<div class="page-head"><div><h1>Attendees</h1><p>${list.length} shown of ${S().bookings.length} records.</p></div><a class="btn btn-primary" href="#s-register">Register attendee</a></div>
-      <div class="filters">
-        <input type="search" id="pp-q" placeholder="Search name, reference, phone, email or HPCNA number" value="${esc(A.ui.q)}" data-input="people-q" aria-label="Search attendees">
-        ${chips('status', [['all', 'All'], ['confirmed', 'Booked'], ['waitlisted', 'Waiting'], ['offered', 'Offer pending'], ['inactive', 'Cancelled / released']])}
-        ${chips('prog', [['all', 'Any progress'], ['not-arrived', 'Not arrived'], ['arrived', 'Arrived, not completed'], ['completed', 'Completed'], ['no-feedback', 'Completed, no feedback'], ['blocked', 'Certificate blocked'], ['ready', 'Ready'], ['released', 'Released']])}
-        ${chips('flag', [['all', 'Any flag'], ['early', 'Early departure'], ['duplicate', 'Duplicate'], ['hpcna', 'HPCNA review'], ['exception', 'Exception'], ['unchecked', 'Details unchecked'], ['contingency', 'Contingency'], ['staff', 'Staff-registered'], ['marketing', 'Marketing consent']])}
-        <div class="row small"><span class="muted">Sort:</span>${chips('sort', [['name', 'Last name'], ['booked', 'Booking order']])}</div>
-      </div>
-      <div id="people-results">${list.length ? `<div class="tbl-wrap resp"><table class="tbl"><thead><tr><th>Name</th><th>Ref</th><th>Booking</th><th>Arrival</th><th>Completion</th><th>Feedback</th><th>Certificate</th><th>Flags</th></tr></thead><tbody>${rows}</tbody></table></div><div class="cards">${cards}</div>` : '<div class="empty">No attendees match these filters.</div>'}</div>`,
-      after: () => { const el = document.getElementById('pp-q'); if (el && A.ui.qFocus) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); A.ui.qFocus = false; } } };
+    const next = b => b.archived ? 'Restore booking' : !b.arrival ? 'Confirm attended' : !C.completed(b) ? 'Confirm session attendance' : !b.detailsChecked ? 'Check details' : C.currentCert(S(),b) ? 'View / send certificate' : 'Resolve checks';
+    return {title:'Attendees', html:`<div class="page-head"><div><h1>Attendees</h1><p>${list.length} active records. Open a name to review details.</p></div><div class="row"><a class="btn" href="#s-archived">Archived / No-shows</a><a class="btn btn-primary" href="#s-register">Add attendee</a></div></div>
+      <div class="filters"><input type="search" id="pp-q" placeholder="Search name, phone, email or registration number" value="${esc(A.ui.q)}" data-input="people-q" aria-label="Search attendees">${chips('prog',[['all','All active'],['completed','Attended'],['arrived','Arrival only'],['not-arrived','Attendance needed'],['blocked','Needs attention'],['released','Certificate issued']])}</div>
+      <section class="panel" id="people-results"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Registration number</th><th>Attendance</th><th>Certificate delivery</th><th>Next action</th></tr></thead><tbody>${list.map(b => `<tr><td><a href="#s-p-${b.id}"><b>${nameOf(b)}</b></a><div class="small muted">${profOf(b)}</div></td><td>${esc(b.hpcna) || 'Needs review'}</td><td>${C.completed(b) ? 'Confirmed' : b.arrival ? 'Arrival recorded' : 'Not confirmed'}</td><td>${esc(deliveryLabel(b))}</td><td><a class="btn btn-s" href="#s-p-${b.id}">${next(b)}</a></td></tr>`).join('')}</tbody></table></div>${list.length ? '' : '<p>No records match.</p>'}</section>`,after:() => {const el = $('#pp-q'); if (el && A.ui.qFocus) {el.focus();el.setSelectionRange(el.value.length,el.value.length);A.ui.qFocus=false;}}};
   }
 
   // ---------- STAFF: person ----------
@@ -759,7 +720,10 @@
     if (['waitlisted', 'expired', 'released'].includes(b.status) && can('waitlist.confirmLate') && (!w.ok || me().role === 'admin') && n <= t.eventEnd) acts.push(btn('confirm-late', b.status === 'released' ? 'Confirm place again (late case)' : 'Confirm place directly (late case)'));
     if (b.status === 'released' && can('booking.reinstate')) acts.push(btn('reinstate', 'Reinstate released booking'));
     if (['waitlisted', 'expired', 'released', 'declined'].includes(b.status) && can('contingency.allocate')) acts.push(btn('contingency', 'Allocate contingency place…'));
-    if (b.status === 'confirmed' && !b.arrival && can('attendance.arrive')) acts.push(btn('arrive', 'Record arrival', 'btn-primary'));
+    if (can('booking.edit')) acts.push(btn('edit-contact', 'Correct delivery contact'));
+    if (b.archived && can('booking.archive')) acts.push(btn('restore-archived', 'Restore booking', 'btn-primary'));
+    if (!b.archived && b.status === 'confirmed' && !C.completed(b) && !b.completion && can('attendance.complete')) acts.push(btn('confirm-attended', 'Confirm attended', 'btn-primary'));
+    if (b.status === 'confirmed' && !b.arrival && can('attendance.arrive')) acts.push(btn('arrive', 'Record arrival'));
     if (b.status === 'confirmed' && b.arrival && !b.completion && can('attendance.complete')) {
       acts.push(btn('complete', 'Completion: signed register', 'btn-ok', 'data-method="register"'));
       acts.push(btn('complete', 'Completion: QR check-out', 'btn-ok', 'data-method="qr-checkout"'));
@@ -776,9 +740,9 @@
     if (['confirmed', 'waitlisted', 'offered'].includes(b.status) && !b.arrival && can('booking.cancel')) acts.push(btn('cancel', 'Cancel booking…', 'btn-danger'));
     const certActs = [];
     if (b.status === 'confirmed') certActs.push(btn('cert-preview', cert ? 'View certificate' : 'Preview certificate'));
-    if (cs.key === 'ready' && can('cert.release')) certActs.push(btn('cert-release', 'Release certificate', 'btn-ok'));
+    if (cs.key === 'ready' && can('cert.release')) certActs.push(btn('cert-release', 'Issue certificate', 'btn-ok'));
     if (cert && can('cert.print')) certActs.push(`<button class="btn" data-act="cert-pdf" data-cert="${cert.id}">Download / print PDF</button>`);
-    if (cert && can('cert.resend')) certActs.push(btn('cert-resend', 'Prepare resend'));
+    if (cert && can('cert.resend')) { certActs.push(btn('wa-send', 'Send certificate via WhatsApp')); certActs.push(btn('wa-resend', 'Resend WhatsApp')); }
     if (cert && can('cert.correct')) certActs.push(btn('cert-correct', 'Correct and reissue…'));
     const openEx = b.exceptions.filter(x => !x.resolved && x.type !== 'early-departure');
     const hist = S().audit.filter(a => a.ref === b.ref).sort((x, y) => y.at - x.at);
@@ -797,7 +761,7 @@
       <section class="panel stack-s"><h2>Actions</h2><div class="row">${acts.join('') || '<span class="muted">No actions available for this booking in its current state.</span>'}</div></section>
       <div class="grid2">
         <section class="panel stack-s"><h2>Certificate</h2>
-          ${cert ? `<p><span class="pill p-ok">Released</span> <span class="mono">${esc(cert.number)}</span> v${cert.version} · ${F(cert.issuedAt)} by ${esc(cert.issuedBy)}</p>` : (b.status === 'confirmed' ? (cs.blockers.length ? `<p><b>Blocked by:</b></p><ul class="blk">${cs.blockers.map(x => `<li>${esc(x.label)} <span class="muted small">(${esc(x.who)})</span></li>`).join('')}</ul>` : '<p><span class="pill p-info">Ready to release</span> All conditions are met. The administrator can release it.</p>') : '<p class="muted">Only booked attendees can receive a certificate.</p>')}
+          ${cert ? `<p><span class="pill p-ok">Released</span> <span class="mono">${esc(cert.number)}</span> v${cert.version} · ${F(cert.issuedAt)} by ${esc(cert.issuedBy)}</p>` : (b.status === 'confirmed' ? (cs.blockers.length ? `<p><b>Blocked by:</b></p><ul class="blk">${cs.blockers.map(x => `<li>${esc(x.label)} <span class="muted small">(${esc(x.who)})</span></li>`).join('')}</ul>` : '<p><span class="pill p-info">Ready to issue</span> All conditions are met. It will be issued automatically when the saved signature and required checks are complete.</p>') : '<p class="muted">Only booked attendees can receive a certificate.</p>')}
           <div class="row">${certActs.join('')}</div>
           ${certs.length > 1 || (certs.length && certs[0].version > 1) ? `<h3 style="margin-top:8px">Issuance history</h3><ul class="small">${certs.map(c => `<li>v${c.version} · ${F(c.issuedAt)} · ${esc(c.issuedBy)} · ${c.status}${c.reason ? ' · ' + esc(c.reason) : ''}</li>`).join('')}</ul>` : ''}
         </section>
@@ -837,7 +801,7 @@
     A.modal = { html: () => `<div class="modal-head"><div><div class="eyebrow">${esc(m.type)} · ${C.CHANNELS[m.channel]}</div><h2>Message to ${nameOf(b)}</h2></div><button class="btn btn-s" data-act="close-modal">Close</button></div>
       <dl class="kv"><dt>To</dt><dd class="mono">${esc(m.to || '— no address for this channel —')}</dd><dt>Status</dt><dd>${C.MSG_STATUS[m.status]}</dd></dl>
       ${m.channel === 'email' ? `<div class="msgtext"><b>Subject:</b> ${esc(txt.subject)}</div>` : ''}<div class="msgtext">${esc(txt.body)}</div>
-      ${m.status === 'failed' ? `<div class="alert bad"><div><b>The automatic email was not sent.</b> ${esc(m.error || '')}</div></div>` : ''}
+      ${m.status === 'failed' ? `<div class="alert bad"><div><b>The automatic message was not sent.</b> ${esc(m.error || '')}</div></div>` : ''}
       <div class="row">${emailOn() && b.email && can('message.prepare') ? `<button class="btn btn-ok" data-act="msg-email" data-msg="${m.id}">${m.channel === 'email' ? 'Send email again' : 'Send by email now'}</button>` : ''}<button class="btn btn-primary" data-act="copy" data-text="${esc(full)}">Copy message</button>
         ${wa ? `<a class="btn" href="${esc(wa)}" target="_blank" rel="noopener">Open in WhatsApp</a>` : ''}
         ${b.email ? `<a class="btn" href="mailto:${esc(b.email)}?subject=${encodeURIComponent(txt.subject)}&body=${encodeURIComponent(txt.body)}">Open email app</a>` : ''}</div>
@@ -990,21 +954,9 @@
   }
 
   // ---------- STAFF: certificates ----------
-  function vCerts() {
-    const e = E(), a = e.approval, list = S().bookings.filter(b => b.status === 'confirmed').sort((x, y) => (x.lastName + x.firstName).localeCompare(y.lastName + y.firstName));
-    const st = C.stats(S());
-    const admin = can('approval.edit');
-    const rows = list.map(b => { const cs = C.certStatus(S(), b); return `<tr><td><a href="#s-p-${b.id}"><b>${nameOf(b)}</b></a><div class="small muted mono">${esc(b.ref)}</div></td><td>${pCert(b)}</td>
-      <td class="small">${cs.key === 'blocked' ? cs.blockers.map(x => esc(x.label)).join('<br>') : (cs.cert ? `<span class="mono">${esc(cs.cert.number)}</span> v${cs.cert.version}` : '')}</td>
-      <td><div class="row"><button class="btn btn-s" data-act="cert-preview" data-id="${b.id}">${cs.cert ? 'View' : 'Preview'}</button>${cs.key === 'ready' && can('cert.release') ? `<button class="btn btn-s btn-ok" data-act="cert-release" data-id="${b.id}">Release</button>` : ''}${cs.cert && can('cert.print') ? `<button class="btn btn-s" data-act="cert-pdf" data-cert="${cs.cert.id}">PDF</button>` : ''}</div></td></tr>`; }).join('');
-    const fs = A.forms.appr || {};
-    return { title: 'Certificates', html: `<div class="page-head"><div><h1>Certificates</h1><p>${st.certs.released} released · ${st.certs.ready} ready · ${st.certs.blocked} blocked.</p></div>
-        ${can('cert.release') ? `<button class="btn btn-ok" data-act="release-all" ${st.certs.ready ? '' : 'disabled'}>Release all ready (${st.certs.ready})</button>` : ''}</div>
-      <section class="panel stack-s"><h2>Release conditions</h2><ul class="blk">
-        <li class="okk">Session completion confirmed (signed register or QR check-out; early departures approved by the administrator)</li>
-        <li class="okk">Evaluation recorded — NO FEEDBACK, NO CERTIFICATE</li><li class="okk">Attendee details checked (duplicates and missing HPCNA numbers resolved)</li>
-        <li class="${C.approvalComplete(e) ? 'okk' : ''}">HPCNA-approved activity number, CEUs and level entered ${C.approvalComplete(e) ? '' : '— <b>not yet</b>'}</li><li class="okk">Administrator authorises release</li></ul></section>
-      <div class="grid2">
+  function certificateSettings() {
+    const e=E(), a=e.approval, fs=A.forms.appr || {}, admin=can('approval.edit');
+    return `      <div class="grid2">
         <section class="panel stack-s"><h2>HPCNA approval details</h2>
           <p class="small">Enter these exactly as they appear on the HPCNA approval. Never estimate. Until all three are entered, every preview is marked “SAMPLE — NOT VALID FOR CPD”.</p>
           ${admin ? `<form class="form" data-form="appr">${fs.message ? `<div class="form-errors">${esc(fs.message)}</div>` : ''}
@@ -1015,14 +967,27 @@
             : `<dl class="kv"><dt>Activity no.</dt><dd>${esc(a.activityNumber) || '—'}</dd><dt>CEUs</dt><dd>${esc(a.ceus) || '—'}</dd><dt>Level</dt><dd>${esc(a.level) || '—'}</dd></dl><p class="small muted">Only the administrator enters approval details.</p>`}
         </section>
         <section class="panel stack-s"><h2>Signatory</h2>
-          <p class="small">The template has an authorised provider signature line. Leave the image empty to sign printed copies by hand. Only upload a signature the signatory has authorised for this use.</p>
+          <p class="small">The template has an authorised provider signature line. Your saved image appears in previews and is embedded permanently in issued certificate layouts. Only upload a signature the signatory has authorised for this use.</p>
           ${admin ? `<form class="form" data-form="sig"><div class="field"><label for="sg-name">Name (printed under the line, optional)</label><input type="text" id="sg-name" name="name" value="${esc(e.signatory.name)}"></div>
             <div class="field"><label for="sg-title">Title (optional)</label><input type="text" id="sg-title" name="title" value="${esc(e.signatory.title)}"></div>
-            <div class="field"><label for="sg-img">Authorised signature image (PNG, optional)</label><input type="file" id="sg-img" accept="image/png" data-change="sig-img">${e.signatory.image ? `<img src="${esc(e.signatory.image)}" alt="Current signature" style="max-height:60px;background:#fff;border-radius:6px;padding:4px"><button class="btn btn-s" type="button" data-act="sig-remove">Remove image</button>` : ''}</div>
+            <div class="field"><label for="sg-img">Authorised signature image (PNG)</label><input type="file" id="sg-img" accept="image/png" data-change="sig-img">${e.signatory.image ? `<img src="${esc(e.signatory.image)}" alt="Current signature" style="max-height:60px;background:#fff;border-radius:6px;padding:4px"><button class="btn btn-s" type="button" data-act="sig-remove">Remove image</button>` : ''}</div>
             <button class="btn btn-primary" type="submit">Save signatory</button></form>` : `<p>${esc(e.signatory.name) || 'Not set'}</p>`}
         </section>
       </div>
-      <section class="panel"><h2>Attendees</h2>${list.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Status</th><th>Blocked by / certificate</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty">No booked attendees.</div>'}</section>` };
+`;
+  }
+  function vCerts() {
+    const list = S().bookings.filter(b => !b.archived && b.status === 'confirmed' && (b.arrival || C.currentCert(S(),b)));
+    const wa = S().messages.filter(m => m.type === 'certificate' && m.channel === 'whatsapp' && S().bookings.some(b => b.id === m.bookingId && !b.archived));
+    const current = wa.filter(m => {const b = byId(m.bookingId), cert = C.currentCert(S(), b);return cert && (!m.certificateId || cert.id === m.certificateId);});
+    const last = current.filter(m => !current.some(n => n.bookingId === m.bookingId && current.indexOf(n) > current.indexOf(m)));
+    const failures = last.filter(m => ['failed','unknown'].includes(m.status));
+    const manual = last.filter(m => m.status === 'prepared');
+    return {title:'Certificates', html:`<div class="page-head"><div><h1>Certificates</h1><p>Confirmed attendance triggers issuance. Surveys are optional.</p></div></div>
+      <section class="panel stack-s"><h2>Send certificates</h2><p>${S().integration && S().integration.whatsapp ? 'WhatsApp Business connected. Send all queues private links for eligible attendees.' : 'WhatsApp Business setup is needed for automatic sending. Prepare all, then open and send each private message in WhatsApp.'}</p><div class="row">${can('cert.resend') ? `<button class="btn btn-primary" data-act="wa-all">${S().integration && S().integration.whatsapp ? 'Send all certificates' : 'Prepare all WhatsApp messages'}</button><button class="btn" data-act="wa-all-resend">Resend all issued certificates</button>` : ''}<a class="btn" href="#s-settings">Signature & approval settings</a></div><p class="small muted">Existing certificates are preserved. Missing mobile numbers or unresolved certificate checks need attention.</p></section>
+      ${failures.length ? `<section class="panel stack-s"><h2>Sending needs attention (${failures.length})</h2>${failures.map(m => `<div class="row-between"><span>${nameOf(byId(m.bookingId))} · ${esc(C.MSG_STATUS[m.status])}<br><span class="small muted">${esc(m.error)}</span></span><button class="btn btn-s" data-act="wa-retry" data-msg="${m.id}">Retry WhatsApp</button></div>`).join('')}</section>` : ''}
+      ${manual.length ? `<section class="panel stack-s"><h2>Ready to share in WhatsApp (${manual.length})</h2><p class="small muted">Open a message, press Send in WhatsApp, then mark it manually shared.</p>${manual.map(m => `<div class="row-between"><b>${nameOf(byId(m.bookingId))}</b><button class="btn btn-s" data-act="msg-open" data-msg="${m.id}">Open WhatsApp message</button></div>`).join('')}</section>` : ''}
+      <section class="panel"><h2>Attendee certificates</h2><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Certificate / checks</th><th>WhatsApp</th><th>Actions</th></tr></thead><tbody>${list.map(b => {const cs=C.certStatus(S(),b);return `<tr><td><a href="#s-p-${b.id}">${nameOf(b)}</a></td><td>${cs.cert ? esc(cs.cert.number) : cs.blockers.map(x=>esc(x.label)).join('<br>')}</td><td>${esc(deliveryLabel(b))}</td><td><div class="row"><button class="btn btn-s" data-act="cert-preview" data-id="${b.id}">Preview</button>${cs.cert ? `<button class="btn btn-s" data-act="cert-pdf" data-cert="${cs.cert.id}">PDF</button>${can('cert.resend') ? `<button class="btn btn-s" data-act="wa-send" data-id="${b.id}">Send WhatsApp</button><button class="btn btn-s" data-act="wa-resend" data-id="${b.id}">Resend WhatsApp</button>` : ''}` : ''}</div></td></tr>`;}).join('')}</tbody></table></div></section>`};
   }
   function openCertPreview(id) {
     const b = S().bookings.find(x => x.id === id); const cert = C.currentCert(S(), b); const cs = C.certStatus(S(), b);
@@ -1037,7 +1002,7 @@
 
   // ---------- STAFF: feedback ----------
   function vFeedbackStaff() {
-    const B = S().bookings.filter(b => b.status === 'confirmed');
+    const B = S().bookings.filter(b => b.status === 'confirmed' && !b.archived);
     const missing = B.filter(b => C.completed(b) && !b.feedback).sort((a, b) => a.lastName.localeCompare(b.lastName));
     const recorded = B.filter(b => b.feedback).length;
     let summary = '';
@@ -1051,7 +1016,7 @@
           ${sm.improve.length ? `<details><summary>Improvement comments (${sm.improve.length})</summary><ul>${sm.improve.map(x => `<li>${esc(x)}</li>`).join('')}</ul></details>` : ''}` : '<div class="empty">No responses yet.</div>'}
         <p class="small muted">Responses are stored without names, booking references or exact times, so individual answers cannot be linked to an attendee here.</p></section>`;
     }
-    return { title: 'Feedback', html: `<div class="page-head"><div><h1>Feedback</h1><p>${recorded} evaluation(s) recorded for ${B.length} booked attendees. NO FEEDBACK, NO CERTIFICATE.</p></div>
+    return { title: 'Feedback', html: `<div class="page-head"><div><h1>Feedback</h1><p>${recorded} evaluation(s) recorded for ${B.length} booked attendees. The survey is optional for certificate issuance.</p></div>
         <div class="row"><button class="btn" data-act="paper-batch">Enter anonymous paper answers</button></div></div>
       <section class="panel stack-s"><h2>Completed, no evaluation yet (${missing.length})</h2>
         <p class="small">Record a paper form as received, or prepare a reminder with the attendee's evaluation link. Only submission status is shown, never answers.</p>
@@ -1079,7 +1044,7 @@
     const counts = {}; for (const m of S().messages) counts[m.status] = (counts[m.status] || 0) + 1;
     const shown = list.slice(0, 80);
     return { title: 'Messages', html: `<div class="page-head"><div><h1>Messages</h1><p>${S().messages.length} prepared messages. ${counts.prepared || 0} still to share.</p></div></div>
-      ${emailOn() ? `<div class="alert info"><div><b>Emails are sent automatically</b> for booking confirmations, the waiting list and place offers (from the WAP Gmail account, up to 100 a day). Their status shows below: “Sent”, or “Email not sent” with the reason — open it to send again. WhatsApp messages are still prepared for you to send yourself; mark them “Manually shared” afterwards.</div></div>`
+      ${emailOn() ? `<div class="alert info"><div><b>Emails are sent automatically</b> for booking confirmations, the waiting list and place offers (from the WAP Gmail account, up to 100 a day). Their status shows below: “Sent”, or “Email not sent” with the reason — open it to send again. WhatsApp connection and certificate sending are shown on Certificates.</div></div>`
         : `<div class="alert info"><div><b>Nothing is sent automatically${isRemote() ? ' yet' : ''}.</b> Messages are prepared with the attendee's private links. Copy them or open WhatsApp/email, send them yourself, then mark them “Manually shared”.${isRemote() ? ' Automatic email starts once the Google email script is connected.' : ''}</div></div>`}
       ${can('message.prepare') ? `<section class="panel stack-s"><h2>Prepare in bulk</h2><div class="row">
         <button class="btn" data-act="bulk-msg" data-type="reminder">Reminders to everyone booked</button>
@@ -1187,6 +1152,8 @@
     const inp = (k, label, v, type, hint) => `<div class="field"><label for="ev-${k}">${label}</label>${hint ? `<span class="hint">${hint}</span>` : ''}<input type="${type || 'text'}" id="ev-${k}" name="${k}" value="${val(k, v)}"></div>`;
     const rc = e.rsvpClose.slice(0, 16);
     return { title: 'Settings', html: `<div class="page-head"><div><h1>Settings</h1><p>Event details are configurable so the app can be reused for future events.</p></div></div>
+      ${certificateSettings()}
+      <section class="panel stack-s"><h2>Messaging connections</h2><p>WhatsApp Business: <b>${S().integration && S().integration.whatsapp ? 'Connected' : 'Not connected'}</b> · Automatic email: <b>${emailOn() ? 'Connected' : 'Not connected'}</b></p><p class="small muted">WhatsApp connection credentials are configured securely on the server. Follow WHATSAPP-SETUP.md in the update folder. Never paste access tokens into this website.</p></section>
       <form class="panel form" data-form="ev">${fs.message ? `<div class="form-errors">${esc(fs.message)}</div>` : ''}
         <h2>Event</h2>
         <div class="two">${inp('topic', 'Topic', e.topic)}${inp('title', 'Activity name', e.title)}</div>${inp('subtitle', 'Subtitle', e.subtitle)}
@@ -1306,8 +1273,16 @@
     'msg-open': el => openMessage(el.dataset.msg),
     'msg-email': el => run((st, c) => C.queueEmailResend(st, c, actor(), el.dataset.msg), m => `Email to ${m.to} is being sent.`, { then: () => setTimeout(() => refresh().then(render), 4000) }),
     'msg-status': el => run((st, c) => C.setMessageStatus(st, c, actor(), el.dataset.msg, el.dataset.status), 'Status updated.', { keepModal: true, then: m => setTimeout(() => openMessage(m.id), 0) }),
-    'bulk-msg': el => { const type = el.dataset.type; run((st, c) => { let list = st.bookings.filter(b => b.status === 'confirmed'); if (type === 'feedback') list = list.filter(b => C.completed(b) && !b.feedback); if (type === 'certificate') list = list.filter(b => C.currentCert(st, b));
+    'bulk-msg': el => { const type = el.dataset.type; run((st, c) => { let list = st.bookings.filter(b => b.status === 'confirmed' && !b.archived); if (type === 'feedback') list = list.filter(b => C.completed(b) && !b.feedback); if (type === 'certificate') list = list.filter(b => C.currentCert(st, b));
       if (!list.length) throw new C.RuleError('none', 'Nobody matches for this message.'); list.forEach(b => C.prepareMessage(st, c, actor(), b.id, type)); return list.length; }, k => `${k} message(s) prepared.`); },
+    'edit-contact': el => { const b=byId(el.dataset.id);ask({title:'Correct delivery contact',fields:[{name:'phone',label:'Mobile number',value:b.phone},{name:'email',label:'Email',value:b.email}],onOk:f => run((st,c)=>C.updateContact(st,c,actor(),b.id,f),'Delivery contact saved. Certificate identity is unchanged.')}); },
+    'restore-archived': el => run((st,c) => C.restoreArchived(st,c,actor(),el.dataset.id), 'Booking restored. Confirm attendance from the event record.'),
+    'confirm-attended': el => { const b=byId(el.dataset.id); ask({title:'Confirm session attendance', body:'Use the signed event register. This records attendance, not just a booking. After the event, enter the actual times shown in your record.', fields:[...(!b.arrival ? [{name:'arrival',type:'time',label:'Arrival time from event record'}] : []), {name:'completion',type:'time',label:'Session completion time from event record'}], onOk:f => run((st,c) => {if (!b.arrival) C.recordArrival(st,c,actor(),b.id,'paper-register',timeToMs(f.arrival));return C.confirmCompletion(st,c,actor(),b.id,'register',timeToMs(f.completion));},'Attendance confirmed. Certificate checks run automatically.')}); },
+    'wa-all': () => run((st,c) => C.sendAllCertificates(st,c,actor(),false), k => `${k} WhatsApp message(s) ready or queued. Check statuses below.`),
+    'wa-all-resend': () => ask({title:'Resend all issued certificates?',body:'Each eligible attendee will receive their own private certificate link. Already queued messages will not be duplicated. Without a WhatsApp Business connection, messages are prepared for manual sending.',ok:'Resend all',onOk:() => run((st,c) => C.sendAllCertificates(st,c,actor(),true),'Certificate resends prepared or queued.')}),
+    'wa-send': el => run((st,c) => C.sendCertificateWhatsApp(st,c,actor(),el.dataset.id,false),'Certificate message ready or queued.',{then:m => {if(m.status === 'prepared') setTimeout(()=>openMessage(m.id),0);}}),
+    'wa-resend': el => run((st,c) => C.sendCertificateWhatsApp(st,c,actor(),el.dataset.id,true),'Certificate resend ready or queued.',{then:m => {if(m.status === 'prepared') setTimeout(()=>openMessage(m.id),0);}}),
+    'wa-retry': el => ask({title:'Retry WhatsApp?',body:'If the previous result is uncertain, check whether it arrived before retrying to avoid a duplicate.',ok:'Retry',onOk:() => run((st,c) => C.retryWhatsApp(st,c,actor(),el.dataset.msg),'Retry ready or queued.')}),
     // certificates
     'cert-preview': el => openCertPreview(el.dataset.id),
     'cert-preview-pdf': el => certPdf(byId(el.dataset.id), null),
