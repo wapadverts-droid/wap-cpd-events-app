@@ -409,3 +409,39 @@ test('automatic email: queued only when sending is connected; resend and repeat-
   CPD.makeOffer(s.state, s.ctx, s.pa);
   assert.ok(s.state.messages.some(m => m.bookingId === w.id && m.channel === 'email' && m.type === 'offer'));
 });
+
+test('post-event entry: admin only, reason required, no stale messages or automatic completion', () => {
+  const s = fresh();
+  s.ctx.now = at('2026-10-25', '12:00');
+  const opts = { channel: 'staff', reason: 'Missing walk-in record from event night' };
+  throwsCode(() => CPD.createBooking(s.state, s.ctx, s.pa, person(), opts), 'closed');
+  throwsCode(() => CPD.createBooking(s.state, s.ctx, null, person(), opts), 'auth');
+  throwsCode(() => CPD.createBooking(s.state, s.ctx, s.admin, person(), {}), 'rsvp_closed');
+  throwsCode(() => CPD.createBooking(s.state, s.ctx, s.admin, person(), { channel: 'staff' }), 'reason');
+  const messages = s.state.messages.length;
+  const b = CPD.createBooking(s.state, s.ctx, s.admin, person(), opts);
+  assert.equal(b.status, 'confirmed');
+  assert.equal(b.postEventReason, opts.reason);
+  assert.equal(s.state.messages.length, messages);
+  assert.equal(b.arrival, null);
+  assert.equal(b.completion, null);
+  assert.equal(b.feedback, null);
+  assert.equal(CPD.certStatus(s.state, b).key, 'blocked');
+  assert.ok(JSON.stringify(s.state.audit).includes('Post-event attendee added'));
+  assert.equal(s.state.event.date, '2026-10-23');
+});
+
+test('post-event entry preserves capacity and duplicate review', () => {
+  const s = fresh(); fill(s, 50);
+  s.ctx.now = at('2026-10-25', '12:00');
+  const opts = { channel: 'staff', reason: 'Missing walk-in registration' };
+  throwsCode(() => CPD.createBooking(s.state, s.ctx, s.admin, person(), opts), 'capacity');
+  opts.pool = 'contingency';
+  const p = person();
+  CPD.createBooking(s.state, s.ctx, s.admin, p, opts);
+  const dup = CPD.createBooking(s.state, s.ctx, s.admin, p, opts);
+  assert.ok(dup.flags.duplicate);
+  for (let i = 0; i < 8; i++) CPD.createBooking(s.state, s.ctx, s.admin, person(), opts);
+  throwsCode(() => CPD.createBooking(s.state, s.ctx, s.admin, person(), opts), 'contingency_full');
+  assert.equal(CPD.capacity(s.state).total, 60);
+});
