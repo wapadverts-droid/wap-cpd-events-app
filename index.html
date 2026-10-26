@@ -355,6 +355,7 @@ ol.next .btn { margin-left: 6px; vertical-align: middle; }
 
   const PERMS = {
     'register.routine': ['admin', 'pa'],
+    'register.postEvent': ['admin'],
     'booking.edit': ['admin', 'pa'],
     'booking.cancel': ['admin', 'pa'],
     'booking.reinstate': ['admin', 'pa'],
@@ -723,9 +724,12 @@ ol.next .btn { margin-left: 6px; vertical-align: middle; }
         need(state, actor, 'contingency.allocate');
         if (clean(opts.reason).length < 5) fail('reason', 'Record a reason for using a contingency place (at least a few words).');
       }
-      if (now > t.eventEnd) fail('closed', 'The event has ended. New registrations are closed.');
+      if (now > t.eventEnd) {
+        if (!can(state, actor, 'register.postEvent')) fail('closed', 'Only an administrator can add attendees after the event.');
+        if (clean(opts.reason).length < 5) fail('reason', 'Record why this attendee is being added after the event.');
+      }
     } else {
-      if (now >= t.rsvpClose) fail('rsvp_closed', `Online RSVPs closed at ${fmt(t.rsvpClose, state.event.timezone)}. Please contact us: ${contactText(state.event)}.`);
+      if (now >= t.rsvpClose || now > t.eventEnd) fail('rsvp_closed', `Online RSVPs closed at ${fmt(t.rsvpClose, state.event.timezone)}. Please contact us: ${contactText(state.event)}.`);
     }
     if (!isStaff && input && clean(input.website)) fail('spam', 'Your RSVP could not be accepted. Please try again, or contact us.');
     const val = validateAttendee(input, { staff: isStaff, requireEmail: !isStaff || !(input && input.noEmail) });
@@ -747,6 +751,7 @@ ol.next .btn { margin-left: 6px; vertical-align: middle; }
     } else {
       status = 'waitlisted'; pool = 'public';
     }
+    if (now > t.eventEnd && status !== 'confirmed') fail('capacity', 'No advance place is available. Select a contingency place if one remains.');
     state.counters.booking++;
     const b = Object.assign({}, v, {
       id: 'b' + state.counters.booking + randStr(ctx, 4, ALPHA),
@@ -754,6 +759,7 @@ ol.next .btn { margin-left: 6px; vertical-align: middle; }
       ref: newRef(state, ctx),
       token: randStr(ctx, 26, ALNUM),
       createdAt: now,
+      postEventReason: now > t.eventEnd ? clean(opts.reason) : '',
       source: isStaff ? (opts.source || 'staff-desk') : 'online',
       createdBy: staff ? staff.name : 'Online RSVP',
       status, pool,
@@ -772,7 +778,11 @@ ol.next .btn { margin-left: 6px; vertical-align: middle; }
     const who = staff ? whoStaff(staff) : WHO_ATTENDEE;
     audit(state, ctx, who, pool === 'contingency' ? 'Contingency place allocated' : (status === 'waitlisted' ? 'Added to waiting list' : 'Booking created'),
       b.ref, `${fullName(b)} · ${b.source}${pool === 'contingency' ? ' · Reason: ' + b.contingencyReason : ''}${dups.length ? ' · Possible duplicate of ' + dups.map(d => d.ref).join(', ') : ''}`);
-    prepareMessage(state, ctx, null, b.id, status === 'waitlisted' ? 'waitlist' : 'confirmation');
+    if (now > t.eventEnd) {
+      audit(state, ctx, who, 'Post-event attendee added', b.ref, `${fullName(b)} · Reason: ${b.postEventReason}`);
+    } else {
+      prepareMessage(state, ctx, null, b.id, status === 'waitlisted' ? 'waitlist' : 'confirmation');
+    }
     return b;
   }
 
@@ -3160,15 +3170,18 @@ window.WAPCPD_CONFIG = {
     const fs = A.forms.reg || {}, st = C.stats(S()), n = now(), t = T();
     const v = fs.values || {};
     const res = A.ui.regResult;
+    const postEvent = n > t.eventEnd;
+    if (postEvent && !can('register.postEvent')) return { title: 'Register attendee', html: '<h1>Register an attendee</h1><div class="alert warn">The event has ended. Ask an administrator to add missing attendees.</div>' };
     return { title: 'Register attendee', html: `<div class="page-head"><div><h1>Register an attendee</h1><p>For phone, walk-in, email and paper-form registrations. ${st.publicFree} public place(s) free, ${st.waitlisted} waiting, ${st.contingencyFree} contingency.</p></div></div>
-      ${n >= t.rsvpClose ? `<div class="alert warn"><div>Online RSVPs are closed. Staff can still register people while places remain; when full, they join the waiting list.</div></div>` : ''}
+      ${postEvent ? '<div class="alert info">Administrator post-event entry: record the reason below. Arrival, completion and feedback must be recorded separately. No booking confirmation will be sent.</div>' : ''}
+      ${!postEvent && n >= t.rsvpClose ? `<div class="alert warn"><div>Online RSVPs are closed. Staff can still register people while places remain; when full, they join the waiting list.</div></div>` : ''}
       ${res ? `<div class="alert ok"><div><b>${esc(res.name)}</b> — ${esc(res.text)} Reference <span class="mono">${esc(res.ref)}</span>.</div><a class="btn btn-s" href="#s-p-${res.id}">Open record</a></div>` : ''}
       <form class="panel form" data-form="reg" novalidate>
         <div class="two"><div class="field"><label for="r-source">How did they register?</label><select id="r-source" name="source">${[['staff-phone', 'Phone call'], ['staff-walkin', 'Walk-in at the desk'], ['paper-form', 'Paper registration form'], ['staff-email', 'Email']].map(([k, l]) => `<option value="${k}" ${v.source === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         ${can('contingency.allocate') ? `<div class="field"><label for="r-pool">Place</label><select id="r-pool" name="pool"><option value="auto">Normal: advance place, or waiting list if full</option><option value="contingency" ${v.pool === 'contingency' ? 'selected' : ''}>Contingency place (administrator)</option></select></div>` : '<div></div>'}</div>
-        ${can('contingency.allocate') ? `<div class="field"><label for="r-reason">Reason for contingency place</label><span class="hint">Required when using a contingency place.</span><input type="text" id="r-reason" name="reason" value="${esc(v.reason)}"></div>` : ''}
+        ${can('contingency.allocate') ? `<div class="field"><label for="r-reason">${postEvent ? 'Reason for post-event addition' : 'Reason for contingency place'}</label><span class="hint">${postEvent ? 'Required for every post-event addition; also explains any contingency allocation.' : 'Required when using a contingency place.'}</span><input type="text" id="r-reason" name="reason" value="${esc(v.reason)}"></div>` : ''}
         ${attendeeFields(fs, { staff: true, p: 'r' })}
-        <button class="btn btn-primary btn-xl" type="submit">Register</button>
+        <button class="btn btn-primary btn-xl" type="submit">${postEvent ? 'Add post-event attendee' : 'Register'}</button>
         <p class="small muted">The rules check capacity again at the moment of saving, so two people registering at once cannot overbook.</p>
       </form>` };
   }
